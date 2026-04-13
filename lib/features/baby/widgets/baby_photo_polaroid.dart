@@ -54,14 +54,13 @@ class BabyPhotoPolaroid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Card width fits within slot spacing; height fills ~85% of the available
-    // half-canvas so polaroids reach close to top/bottom edges.
-    const double stemH = 18;
-    const double captionH = 22;
+    // Card fills ~70% of its half-canvas, capped so multiple rows can coexist
+    const double stemH = 16;
+    const double captionH = 20;
     final double halfH = _isAbove ? lineY : (canvasH - lineY);
     final double cardH =
-        (halfH - stemH - captionH - 16).clamp(60.0, 320.0); // 16 = margin
-    final double cardW = (cardH * 0.82).clamp(60.0, 260.0);
+        (halfH * 0.70 - stemH - captionH).clamp(55.0, 200.0);
+    final double cardW = (cardH * 0.82).clamp(55.0, 160.0);
 
     final double top = _isAbove
         ? lineY - stemH - cardH - captionH

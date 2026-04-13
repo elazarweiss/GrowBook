@@ -9,15 +9,39 @@ class BabyRepository {
 
   late Box<BabyEntry> _entries;
   late Box<BabyJourney> _journeys;
+  late Box<dynamic> _settings;
 
   static const _entriesBoxName = 'babyEntries';
   static const _journeyBoxName = 'babyJourney';
+  static const _settingsBoxName = 'growbookSettings';
   static const _journeyKey = 0;
+
+  // Settings keys
+  static const _keyFolderPath = 'cameraFolderPath';
+  static const _keyLastScanAt = 'lastScanAt';
 
   Future<void> init() async {
     _entries = await Hive.openBox<BabyEntry>(_entriesBoxName);
     _journeys = await Hive.openBox<BabyJourney>(_journeyBoxName);
+    _settings = await Hive.openBox(_settingsBoxName);
   }
+
+  // ── Camera folder settings ─────────────────────────────────────────────────
+
+  String? get cameraFolderPath => _settings.get(_keyFolderPath) as String?;
+
+  Future<void> saveCameraFolderPath(String path) =>
+      _settings.put(_keyFolderPath, path);
+
+  Future<void> clearCameraFolderPath() => _settings.delete(_keyFolderPath);
+
+  DateTime? get lastScanAt {
+    final ms = _settings.get(_keyLastScanAt) as int?;
+    return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
+  }
+
+  Future<void> saveLastScanAt(DateTime dt) =>
+      _settings.put(_keyLastScanAt, dt.millisecondsSinceEpoch);
 
   // ── Journey ────────────────────────────────────────────────────────────────
 

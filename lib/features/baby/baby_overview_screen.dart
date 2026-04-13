@@ -56,8 +56,11 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
 
   Widget _buildHeader(BabyJourney journey) {
     final ageLabel = _ageDescription(journey);
+    final hasFolderConfigured =
+        BabyRepository.instance.cameraFolderPath != null;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 8, 6),
+      padding: const EdgeInsets.fromLTRB(20, 10, 4, 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -75,18 +78,46 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  ageLabel,
-                  style: GoogleFonts.inter(
-                      fontSize: 13, color: AppColors.warmTaupe),
-                ),
+                Text(ageLabel,
+                    style: GoogleFonts.inter(
+                        fontSize: 13, color: AppColors.warmTaupe)),
               ],
             ),
           ),
+          // Auto-scan button (folder → smart import)
+          Tooltip(
+            message: hasFolderConfigured
+                ? 'Scan camera folder for new photos'
+                : 'Set up auto-import from camera folder',
+            child: Stack(
+              alignment: Alignment.topRight,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  color: AppColors.sageGreen,
+                  onPressed: () => context.push('/baby/scan'),
+                ),
+                if (hasFolderConfigured)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: AppColors.sageGreen,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // Manual multi-file import
           IconButton(
             icon: const Icon(Icons.add_photo_alternate_outlined),
-            color: AppColors.sageGreen,
-            tooltip: 'Import photos',
+            color: AppColors.warmTaupe,
+            tooltip: 'Pick photos manually',
             onPressed: () => context.push('/baby/import'),
           ),
         ],
