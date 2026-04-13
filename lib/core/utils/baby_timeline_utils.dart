@@ -2,9 +2,9 @@ import '../models/baby_slot_model.dart';
 
 abstract final class BabyTimelineUtils {
   // Slot widths in logical pixels
-  static const double weekSlotWidth = 100.0;
-  static const double monthSlotWidth = 72.0;
-  static const double yearSlotWidth = 88.0;
+  static const double weekSlotWidth = 130.0;
+  static const double monthSlotWidth = 96.0;
+  static const double yearSlotWidth = 112.0;
 
   // Lookahead: always show this many slots beyond the current one
   static const int _lookahead = 4;

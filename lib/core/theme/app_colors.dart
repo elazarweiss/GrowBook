@@ -12,13 +12,13 @@ abstract final class AppColors {
   static const Color warmTaupe = Color(0xFF6B7280); // cool gray (muted text)
 
   // ── Accent ──────────────────────────────────────────────────────────────────
-  static const Color sageGreen  = Color(0xFFF472B6); // modern rose-pink (primary action)
-  static const Color sageMuted  = Color(0xFFFBCFE8); // soft pink tint
+  static const Color sageGreen  = Color(0xFF0EA5E9); // sky blue (primary action)
+  static const Color sageMuted  = Color(0xFFBAE6FD); // soft sky tint
   static const Color softGold   = Color(0xFFFDE68A); // warm amber highlight
-  static const Color accentSoft = Color(0xFFFDF2F8); // pink tint background
+  static const Color accentSoft = Color(0xFFF0F9FF); // sky tint background
 
   // ── Baby timeline phases ─────────────────────────────────────────────────────
-  static const Color babyBlush   = Color(0xFFFB7185); // vivid rose  (newborn)
+  static const Color babyBlush   = Color(0xFF38BDF8); // vivid sky blue (newborn)
   static const Color babyMint    = Color(0xFF34D399); // vivid mint  (infant)
   static const Color babySunrise = Color(0xFFFBBF24); // vivid amber (toddler)
 

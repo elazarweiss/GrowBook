@@ -6,8 +6,6 @@ import '../../core/models/baby_entry_model.dart';
 import '../../core/models/baby_journey_model.dart';
 import '../../core/models/baby_slot_model.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_spacing.dart';
-import '../../core/theme/app_typography.dart';
 import '../../core/utils/baby_timeline_utils.dart';
 import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
@@ -63,29 +61,30 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
     final ageLabel = _ageDescription(journey);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, AppSpacing.md, AppSpacing.md, 0),
+      padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
               children: [
                 Text(
                   journey.babyName,
                   style: GoogleFonts.inter(
-                    fontSize: 28,
+                    fontSize: 22,
                     fontWeight: FontWeight.w700,
                     color: AppColors.warmBrown,
-                    height: 1.1,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(width: 10),
                 Text(
                   '$ageLabel  ·  ${current.label}',
-                  style: AppTypography.bodySmall
-                      .copyWith(color: AppColors.warmTaupe),
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: AppColors.warmTaupe,
+                  ),
                 ),
               ],
             ),
@@ -185,7 +184,7 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
         return LayoutBuilder(
           builder: (context, constraints) {
             final double canvasH = constraints.maxHeight;
-            final double lineY = canvasH * 0.50;
+            final double lineY = canvasH * 0.56; // below center — more room above for hanging polaroids
 
             return SingleChildScrollView(
               controller: _scrollController,

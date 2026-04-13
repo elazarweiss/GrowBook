@@ -34,11 +34,13 @@ class BabyPhotoPolaroid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const double cardW = 88;
-    const double photoH = 80;
-    const double captionH = 20;
-    const double totalH = photoH + captionH + 8;
-    const double stemH = 16;
+    // Scale polaroid size with available screen height
+    final screenH = MediaQuery.sizeOf(context).height;
+    final double cardW = (screenH * 0.14).clamp(88.0, 160.0);
+    final double photoH = cardW * 0.95;
+    const double captionH = 22;
+    final double totalH = photoH + captionH + 8;
+    final double stemH = (screenH * 0.025).clamp(14.0, 28.0);
 
     final double top = _isAbove
         ? lineY - totalH - stemH

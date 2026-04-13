@@ -63,12 +63,12 @@ class BabyClotheslinePainter extends CustomPainter {
       _drawText(
         canvas,
         label,
-        Offset(x - 4, lineY - 52),
+        Offset(x - 4, lineY - 64),
         TextStyle(
-          fontSize: 8,
-          color: color.withOpacity(0.80),
-          letterSpacing: 1.4,
-          fontWeight: FontWeight.w600,
+          fontSize: 9,
+          color: color.withOpacity(0.90),
+          letterSpacing: 1.6,
+          fontWeight: FontWeight.w700,
         ),
       );
     }
@@ -80,17 +80,17 @@ class BabyClotheslinePainter extends CustomPainter {
     // Clean accent ring — stroke only, no fill
     canvas.drawCircle(
       Offset(x, lineY),
-      20,
+      26,
       Paint()
         ..color = AppColors.sageGreen
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
+        ..strokeWidth = 2.5,
     );
 
     // Small accent dot at center
     canvas.drawCircle(
       Offset(x, lineY),
-      3,
+      4,
       Paint()..color = AppColors.sageGreen,
     );
   }
