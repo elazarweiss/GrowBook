@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -7,7 +8,6 @@ import '../../core/models/baby_journey_model.dart';
 import '../../core/models/baby_slot_model.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/baby_timeline_utils.dart';
-import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
 import 'widgets/baby_clothesline_painter.dart';
 import 'widgets/baby_photo_polaroid.dart';
@@ -43,25 +43,21 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SafeArea(
             bottom: false,
             child: _buildHeader(journey),
           ),
           Expanded(child: _BabyClotheslineTimeline(journey: journey)),
-          const SafeArea(top: false, child: SizedBox(height: 8)),
         ],
       ),
     );
   }
 
   Widget _buildHeader(BabyJourney journey) {
-    final current = journey.currentSlot;
     final ageLabel = _ageDescription(journey);
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+      padding: const EdgeInsets.fromLTRB(20, 10, 8, 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -73,18 +69,16 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
                 Text(
                   journey.babyName,
                   style: GoogleFonts.inter(
-                    fontSize: 22,
+                    fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: AppColors.warmBrown,
                   ),
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  '$ageLabel  ·  ${current.label}',
+                  ageLabel,
                   style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: AppColors.warmTaupe,
-                  ),
+                      fontSize: 13, color: AppColors.warmTaupe),
                 ),
               ],
             ),
@@ -109,11 +103,10 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
   }
 }
 
-// ─── Baby Clothesline Timeline ─────────────────────────────────────────────────
+// ─── Clothesline Timeline ──────────────────────────────────────────────────────
 
 class _BabyClotheslineTimeline extends StatefulWidget {
   final BabyJourney journey;
-
   const _BabyClotheslineTimeline({required this.journey});
 
   @override
@@ -130,42 +123,24 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
     super.initState();
     _scrollController = ScrollController();
     _slots = BabyTimelineUtils.generateSlots(widget.journey.birthDate);
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _scrollToCurrentSlot());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToCurrentSlot());
   }
 
   void _scrollToCurrentSlot() {
     if (!_scrollController.hasClients) return;
     final current = widget.journey.currentSlot;
-    final slot = _slots.where((s) => s.key == current.key).firstOrNull ??
-        _slots.last;
+    final slot =
+        _slots.where((s) => s.key == current.key).firstOrNull ?? _slots.last;
     final x = BabyTimelineUtils.xForSlot(slot, _slots);
-    final viewportWidth = _scrollController.position.viewportDimension;
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final target = (x - viewportWidth / 2).clamp(0.0, maxScroll);
-    _scrollController.jumpTo(target);
+    final vw = _scrollController.position.viewportDimension;
+    final maxS = _scrollController.position.maxScrollExtent;
+    _scrollController.jumpTo((x - vw / 2).clamp(0.0, maxS));
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
-  }
-
-  static String _humanLabel(BabySlot slot) {
-    switch (slot.kind) {
-      case BabyAgeKind.week:
-        if (slot.value == 0) return 'Birth';
-        if (slot.value % 4 == 0) return '${slot.value} wk';
-        return '';
-      case BabyAgeKind.month:
-        if (slot.value % 3 != 0) return '';
-        if (slot.value == 12) return '1 yr';
-        if (slot.value == 24) return '2 yr';
-        return '${slot.value} mo';
-      case BabyAgeKind.year:
-        return '${slot.value} yr';
-    }
   }
 
   @override
@@ -177,114 +152,143 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
         final currentSlot = widget.journey.currentSlot;
         final totalW = BabyTimelineUtils.totalWidth(_slots);
 
-        final milestoneMap = {
-          for (final m in babyMilestones) m.slotKey: m,
-        };
+        return LayoutBuilder(builder: (context, constraints) {
+          final double canvasH = constraints.maxHeight;
+          final double canvasW = math.max(totalW, constraints.maxWidth);
+          // Wire sits at 48% — even split between above and below polaroids
+          final double lineY = canvasH * 0.48;
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final double canvasH = constraints.maxHeight;
-            final double lineY = canvasH * 0.56; // below center — more room above for hanging polaroids
-
-            return SingleChildScrollView(
-              controller: _scrollController,
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              child: SizedBox(
-                width: totalW,
-                height: canvasH,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // ── Ticks + current-slot indicator ──────────────────────
-                    CustomPaint(
-                      size: Size(totalW, canvasH),
-                      painter: BabyClotheslinePainter(
-                        slots: _slots,
-                        currentSlot: currentSlot,
-                        lineY: lineY,
-                      ),
+          return SingleChildScrollView(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: SizedBox(
+              width: canvasW,
+              height: canvasH,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // ── Wire (full canvas width, edge to edge) ───────────────
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: lineY - 1,
+                    child: IgnorePointer(
+                      child: Container(height: 2, color: AppColors.divider),
                     ),
+                  ),
 
-                    // ── Clean single-color wire ──────────────────────────────
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: lineY - 1,
-                      child: IgnorePointer(
-                        child: Container(
-                          height: 2,
-                          color: AppColors.divider,
-                        ),
-                      ),
+                  // ── Ticks + current-slot ring ─────────────────────────────
+                  CustomPaint(
+                    size: Size(canvasW, canvasH),
+                    painter: BabyClotheslinePainter(
+                      slots: _slots,
+                      currentSlot: currentSlot,
+                      lineY: lineY,
                     ),
+                  ),
 
-                    // ── Slot labels below ticks ───────────────────────────────
-                    ..._slots.map((slot) {
-                      final x = BabyTimelineUtils.xForSlot(slot, _slots);
-                      final milestone = milestoneMap[slot.key];
-                      final label = _humanLabel(slot);
-                      if (label.isEmpty && milestone == null) {
-                        return const SizedBox.shrink();
-                      }
-                      return Positioned(
-                        left: x - 24,
-                        top: lineY + 14,
-                        child: SizedBox(
-                          width: 48,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (milestone != null)
-                                Text(
-                                  milestone.emoji,
-                                  style: const TextStyle(fontSize: 10),
-                                  textAlign: TextAlign.center,
-                                ),
-                              if (label.isNotEmpty)
-                                Text(
-                                  label,
-                                  style: GoogleFonts.inter(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w500,
-                                    color: AppColors.warmTaupe,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                            ],
+                  // ── Milestone labels ABOVE the wire ───────────────────────
+                  ..._slots.map((slot) {
+                    final x = BabyTimelineUtils.xForSlot(slot, _slots);
+                    final label = _milestoneLabel(slot);
+                    if (label == null) return const SizedBox.shrink();
+                    final isSpecial =
+                        slot.value == 0 || slot.kind != BabyAgeKind.week;
+                    return Positioned(
+                      left: x - 30,
+                      top: lineY - (isSpecial ? 30 : 24),
+                      child: SizedBox(
+                        width: 60,
+                        child: Text(
+                          label,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: isSpecial ? 10 : 9,
+                            fontWeight: isSpecial
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: isSpecial
+                                ? AppColors.warmBrown
+                                : AppColors.warmTaupe,
                           ),
                         ),
-                      );
-                    }),
+                      ),
+                    );
+                  }),
 
-                    // ── Photo polaroids ───────────────────────────────────────
-                    ..._slots.map((slot) {
-                      final entry = box.get(slot.key);
-                      final x = BabyTimelineUtils.xForSlot(slot, _slots);
-                      return BabyPhotoPolaroid(
-                        key: ValueKey(slot.key),
-                        slot: slot,
-                        photoPath: entry?.photoPaths.isNotEmpty == true
-                            ? entry!.photoPaths.first
-                            : null,
-                        caption: entry?.caption,
-                        x: x,
-                        lineY: lineY,
-                        onTap: () => _openEntry(slot),
-                      );
-                    }),
-                  ],
-                ),
+                  // ── Phase section labels (higher, colored) ─────────────────
+                  ..._phaseLabels(_slots, lineY),
+
+                  // ── Photo polaroids ───────────────────────────────────────
+                  ..._slots.map((slot) {
+                    final entry = box.get(slot.key);
+                    final x = BabyTimelineUtils.xForSlot(slot, _slots);
+                    return BabyPhotoPolaroid(
+                      key: ValueKey(slot.key),
+                      slot: slot,
+                      photoPath: entry?.photoPaths.isNotEmpty == true
+                          ? entry!.photoPaths.first
+                          : null,
+                      caption: entry?.caption,
+                      x: x,
+                      lineY: lineY,
+                      canvasH: canvasH,
+                      onTap: () => context.push('/baby/slot/${slot.key}'),
+                    );
+                  }),
+                ],
               ),
-            );
-          },
-        );
+            ),
+          );
+        });
       },
     );
   }
 
-  void _openEntry(BabySlot slot) {
-    context.push('/baby/slot/${slot.key}');
+  /// Returns the label to show above the wire for major slots only.
+  static String? _milestoneLabel(BabySlot slot) {
+    switch (slot.kind) {
+      case BabyAgeKind.week:
+        if (slot.value == 0) return 'Birth';
+        if (slot.value % 4 == 0) return '${slot.value} wk';
+        return null; // minor weeks get no label above wire
+      case BabyAgeKind.month:
+        if (slot.value % 3 != 0) return null;
+        if (slot.value == 12) return '1 year';
+        if (slot.value == 24) return '2 years';
+        return '${slot.value} mo';
+      case BabyAgeKind.year:
+        return '${slot.value} yr';
+    }
+  }
+
+  static List<Widget> _phaseLabels(List<BabySlot> slots, double lineY) {
+    final phases = [
+      ('NEWBORN', BabyAgeKind.week, 0, AppColors.babyBlush),
+      ('INFANT', BabyAgeKind.month, 3, AppColors.babyMint),
+      ('TODDLER', BabyAgeKind.year, 2, AppColors.babySunrise),
+    ];
+    return phases.map((rec) {
+      final (label, kind, value, color) = rec;
+      final slot =
+          slots.where((s) => s.kind == kind && s.value == value).firstOrNull;
+      if (slot == null) return const SizedBox.shrink();
+      final x = BabyTimelineUtils.xForSlot(slot, slots);
+      return Positioned(
+        left: x - 4,
+        top: lineY - 52,
+        child: Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 8,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.6,
+            color: color.withOpacity(0.85),
+          ),
+        ),
+      );
+    }).toList();
   }
 }
 

@@ -17,7 +17,6 @@ class BabyClotheslinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     _drawTicks(canvas);
-    _drawPhaseLabels(canvas);
     _drawCurrentSlot(canvas);
   }
 
@@ -25,13 +24,15 @@ class BabyClotheslinePainter extends CustomPainter {
     for (final slot in slots) {
       final double x = BabyTimelineUtils.xForSlot(slot, slots);
       final bool isMajor = _isMajorTick(slot);
-      final double tickH = isMajor ? 10.0 : 5.0;
+      final double tickH = isMajor ? 12.0 : 6.0;
 
       canvas.drawLine(
+        Offset(x, lineY - tickH), // tick goes UP from wire
         Offset(x, lineY),
-        Offset(x, lineY + tickH),
         Paint()
-          ..color = AppColors.divider
+          ..color = isMajor
+              ? AppColors.warmTaupe.withOpacity(0.5)
+              : AppColors.divider
           ..strokeWidth = isMajor ? 1.5 : 1.0
           ..strokeCap = StrokeCap.round,
       );
@@ -49,45 +50,19 @@ class BabyClotheslinePainter extends CustomPainter {
     }
   }
 
-  void _drawPhaseLabels(Canvas canvas) {
-    final phases = [
-      ('NEWBORN', BabyAgeKind.week, 0, AppColors.babyBlush),
-      ('INFANT', BabyAgeKind.month, 3, AppColors.babyMint),
-      ('TODDLER', BabyAgeKind.year, 2, AppColors.babySunrise),
-    ];
-
-    for (final (label, kind, value, color) in phases) {
-      final slot = slots.where((s) => s.kind == kind && s.value == value).firstOrNull;
-      if (slot == null) continue;
-      final x = BabyTimelineUtils.xForSlot(slot, slots);
-      _drawText(
-        canvas,
-        label,
-        Offset(x - 4, lineY - 64),
-        TextStyle(
-          fontSize: 9,
-          color: color.withOpacity(0.90),
-          letterSpacing: 1.6,
-          fontWeight: FontWeight.w700,
-        ),
-      );
-    }
-  }
-
   void _drawCurrentSlot(Canvas canvas) {
     final double x = BabyTimelineUtils.xForSlot(currentSlot, slots);
 
-    // Clean accent ring — stroke only, no fill
+    // Accent ring sitting on the wire
     canvas.drawCircle(
       Offset(x, lineY),
-      26,
+      28,
       Paint()
         ..color = AppColors.sageGreen
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.5,
     );
 
-    // Small accent dot at center
     canvas.drawCircle(
       Offset(x, lineY),
       4,
@@ -95,17 +70,9 @@ class BabyClotheslinePainter extends CustomPainter {
     );
   }
 
-  void _drawText(Canvas canvas, String text, Offset anchor, TextStyle style) {
-    final tp = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, anchor);
-  }
-
   @override
-  bool shouldRepaint(BabyClotheslinePainter old) =>
-      old.currentSlot.key != currentSlot.key ||
-      old.slots.length != slots.length ||
-      old.lineY != lineY;
+  bool shouldRepaint(BabyClotheslinePainter oldDelegate) =>
+      oldDelegate.currentSlot.key != currentSlot.key ||
+      oldDelegate.slots.length != slots.length ||
+      oldDelegate.lineY != lineY;
 }
