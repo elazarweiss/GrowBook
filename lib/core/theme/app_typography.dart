@@ -3,21 +3,21 @@ import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
 
 abstract final class AppTypography {
-  static TextStyle heading1 = GoogleFonts.playfairDisplay(
-    fontSize: 32,
-    fontWeight: FontWeight.w400,
+  static TextStyle heading1 = GoogleFonts.inter(
+    fontSize: 28,
+    fontWeight: FontWeight.w700,
     color: AppColors.warmBrown,
   );
 
-  static TextStyle heading2 = GoogleFonts.playfairDisplay(
-    fontSize: 24,
-    fontWeight: FontWeight.w400,
+  static TextStyle heading2 = GoogleFonts.inter(
+    fontSize: 22,
+    fontWeight: FontWeight.w700,
     color: AppColors.warmBrown,
   );
 
-  static TextStyle heading3 = GoogleFonts.playfairDisplay(
-    fontSize: 20,
-    fontWeight: FontWeight.w400,
+  static TextStyle heading3 = GoogleFonts.inter(
+    fontSize: 18,
+    fontWeight: FontWeight.w600,
     color: AppColors.warmBrown,
   );
 

@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/models/baby_slot_model.dart';
 
@@ -22,24 +25,21 @@ class BabyPhotoPolaroid extends StatelessWidget {
     required this.lineY,
   });
 
-  /// Odd-indexed slots hang above the wire, even-indexed below.
   bool get _isAbove => slot.index.isOdd;
 
-  /// Pseudo-random tilt ±3° seeded by slot index.
   double get _tiltRadians {
     final seed = slot.index * 17 + 7;
-    return (math.sin(seed.toDouble()) * 3.0) * (math.pi / 180);
+    return (math.sin(seed.toDouble()) * 2.0) * (math.pi / 180);
   }
 
   @override
   Widget build(BuildContext context) {
-    const double cardW = 68;
-    const double photoH = 52;
-    const double captionH = 18;
-    const double totalH = photoH + captionH + 8; // 8 = top+bottom border
-    const double stemH = 14;
+    const double cardW = 88;
+    const double photoH = 80;
+    const double captionH = 20;
+    const double totalH = photoH + captionH + 8;
+    const double stemH = 16;
 
-    // Position: centered on x, hanging above or below the wire
     final double top = _isAbove
         ? lineY - totalH - stemH
         : lineY + stemH;
@@ -71,9 +71,9 @@ class BabyPhotoPolaroid extends StatelessWidget {
 
   Widget _buildStem() {
     return Container(
-      width: 2,
-      height: 14,
-      color: AppColors.warmTaupe.withOpacity(0.5),
+      width: 1.5,
+      height: 16,
+      color: AppColors.divider,
     );
   }
 
@@ -82,47 +82,40 @@ class BabyPhotoPolaroid extends StatelessWidget {
       width: cardW,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(2),
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: AppColors.warmBrown.withOpacity(0.12),
-            blurRadius: 6,
-            offset: const Offset(1, 3),
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Photo area
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(1),
+              borderRadius: BorderRadius.circular(10),
               child: SizedBox(
                 width: cardW - 8,
                 height: photoH,
                 child: photoPath != null
-                    ? Image.file(
-                        File(photoPath!),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _placeholder(cardW, photoH),
-                      )
+                    ? _buildImage(cardW, photoH)
                     : _placeholder(cardW, photoH),
               ),
             ),
           ),
-          // Caption strip
           SizedBox(
             height: captionH,
             child: Center(
               child: Text(
                 caption?.isNotEmpty == true ? caption! : slot.label,
-                style: const TextStyle(
-                  fontFamily: 'Georgia',
-                  fontSize: 7,
+                style: GoogleFonts.inter(
+                  fontSize: 8,
                   fontStyle: FontStyle.italic,
-                  color: Color(0xFF5C4A32),
+                  color: AppColors.warmTaupe,
                 ),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
@@ -134,16 +127,44 @@ class BabyPhotoPolaroid extends StatelessWidget {
     );
   }
 
+  Widget _buildImage(double cardW, double photoH) {
+    final path = photoPath!;
+
+    if (kIsWeb || path.startsWith('data:')) {
+      // Base64 data URL
+      final comma = path.indexOf(',');
+      if (comma != -1) {
+        final bytes = base64Decode(path.substring(comma + 1));
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          width: cardW - 8,
+          height: photoH,
+          errorBuilder: (_, __, ___) => _placeholder(cardW, photoH),
+        );
+      }
+      return _placeholder(cardW, photoH);
+    }
+
+    return Image.file(
+      File(path),
+      fit: BoxFit.cover,
+      width: cardW - 8,
+      height: photoH,
+      errorBuilder: (_, __, ___) => _placeholder(cardW, photoH),
+    );
+  }
+
   Widget _placeholder(double w, double h) {
     return Container(
       width: w,
       height: h,
-      color: const Color(0xFFF5F1EB),
-      child: Center(
+      color: AppColors.accentSoft,
+      child: const Center(
         child: Icon(
-          Icons.add_photo_alternate_outlined,
-          size: 20,
-          color: AppColors.warmTaupe.withOpacity(0.6),
+          Icons.add,
+          size: 24,
+          color: AppColors.sageGreen,
         ),
       ),
     );

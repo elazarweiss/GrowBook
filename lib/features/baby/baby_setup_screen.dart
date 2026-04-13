@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../core/models/baby_journey_model.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../data/baby_repository.dart';
-import '../../shared/widgets/cream_scaffold.dart';
-import '../../shared/widgets/serif_text.dart';
 
 class BabySetupScreen extends StatefulWidget {
   const BabySetupScreen({super.key});
@@ -63,7 +62,8 @@ class _BabySetupScreenState extends State<BabySetupScreen> {
   Widget build(BuildContext context) {
     final ready = _nameController.text.trim().isNotEmpty && _birthDate != null;
 
-    return CreamScaffold(
+    return Scaffold(
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.lg),
@@ -71,7 +71,15 @@ class _BabySetupScreenState extends State<BabySetupScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: AppSpacing.xl),
-              const SerifText("Welcome to\nyour baby's journey", fontSize: 28),
+              Text(
+                "Welcome to\nyour baby's journey",
+                style: GoogleFonts.inter(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.warmBrown,
+                  height: 1.2,
+                ),
+              ),
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'Tell us a little about your little one.',

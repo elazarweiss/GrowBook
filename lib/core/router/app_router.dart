@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/baby/baby_overview_screen.dart';
 import '../../features/baby/baby_setup_screen.dart';
 import '../../features/baby/baby_entry_screen.dart';
+import '../../features/baby/baby_import_screen.dart';
 import '../utils/baby_timeline_utils.dart';
 
 final GoRouter appRouter = GoRouter(
@@ -49,6 +50,22 @@ final GoRouter appRouter = GoRouter(
           },
         );
       },
+    ),
+    GoRoute(
+      path: '/baby/import',
+      pageBuilder: (context, state) => CustomTransitionPage(
+        child: const BabyImportEntryPoint(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+            child: child,
+          );
+        },
+      ),
     ),
     GoRoute(
       path: '/',

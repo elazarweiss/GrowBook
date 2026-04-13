@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/models/baby_entry_model.dart';
 import '../../core/models/baby_journey_model.dart';
@@ -10,8 +11,6 @@ import '../../core/theme/app_typography.dart';
 import '../../core/utils/baby_timeline_utils.dart';
 import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
-import '../../shared/widgets/cream_scaffold.dart';
-import '../../shared/widgets/serif_text.dart';
 import 'widgets/baby_clothesline_painter.dart';
 import 'widgets/baby_photo_polaroid.dart';
 
@@ -26,7 +25,6 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
   @override
   void initState() {
     super.initState();
-    // Check if setup is needed — redirect after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (BabyRepository.instance.getJourney() == null && mounted) {
         context.go('/baby/setup');
@@ -38,12 +36,14 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
   Widget build(BuildContext context) {
     final journey = BabyRepository.instance.getJourney();
     if (journey == null) {
-      return const CreamScaffold(
+      return const Scaffold(
+        backgroundColor: AppColors.background,
         body: Center(child: CircularProgressIndicator()),
       );
     }
 
-    return CreamScaffold(
+    return Scaffold(
+      backgroundColor: AppColors.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -64,16 +64,37 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+          AppSpacing.lg, AppSpacing.md, AppSpacing.md, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SerifText(journey.babyName, fontSize: 28),
-          const SizedBox(height: 2),
-          Text(
-            '$ageLabel  ·  ${current.label}',
-            style: AppTypography.bodySmall
-                .copyWith(color: AppColors.warmTaupe),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  journey.babyName,
+                  style: GoogleFonts.inter(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.warmBrown,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$ageLabel  ·  ${current.label}',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.warmTaupe),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            color: AppColors.sageGreen,
+            tooltip: 'Import photos',
+            onPressed: () => context.push('/baby/import'),
           ),
         ],
       ),
@@ -117,7 +138,6 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
   void _scrollToCurrentSlot() {
     if (!_scrollController.hasClients) return;
     final current = widget.journey.currentSlot;
-    // Find the matching slot in our list
     final slot = _slots.where((s) => s.key == current.key).firstOrNull ??
         _slots.last;
     final x = BabyTimelineUtils.xForSlot(slot, _slots);
@@ -133,9 +153,24 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
     super.dispose();
   }
 
+  static String _humanLabel(BabySlot slot) {
+    switch (slot.kind) {
+      case BabyAgeKind.week:
+        if (slot.value == 0) return 'Birth';
+        if (slot.value % 4 == 0) return '${slot.value} wk';
+        return '';
+      case BabyAgeKind.month:
+        if (slot.value % 3 != 0) return '';
+        if (slot.value == 12) return '1 yr';
+        if (slot.value == 24) return '2 yr';
+        return '${slot.value} mo';
+      case BabyAgeKind.year:
+        return '${slot.value} yr';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Reactive rebuild whenever baby entries change
     return ValueListenableBuilder<Box<BabyEntry>>(
       valueListenable: BabyRepository.instance.entriesListenable,
       builder: (context, box, _) {
@@ -143,7 +178,6 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
         final currentSlot = widget.journey.currentSlot;
         final totalW = BabyTimelineUtils.totalWidth(_slots);
 
-        // Build milestone map for quick lookup
         final milestoneMap = {
           for (final m in babyMilestones) m.slotKey: m,
         };
@@ -151,7 +185,7 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
         return LayoutBuilder(
           builder: (context, constraints) {
             final double canvasH = constraints.maxHeight;
-            final double lineY = canvasH * 0.50; // center of screen
+            final double lineY = canvasH * 0.50;
 
             return SingleChildScrollView(
               controller: _scrollController,
@@ -163,7 +197,7 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // ── Background tint + ticks + current-slot indicator ──
+                    // ── Ticks + current-slot indicator ──────────────────────
                     CustomPaint(
                       size: Size(totalW, canvasH),
                       painter: BabyClotheslinePainter(
@@ -173,32 +207,27 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
                       ),
                     ),
 
-                    // ── Gradient wire ─────────────────────────────────────
+                    // ── Clean single-color wire ──────────────────────────────
                     Positioned(
                       left: 0,
                       right: 0,
-                      top: lineY - 1.5,
+                      top: lineY - 1,
                       child: IgnorePointer(
                         child: Container(
-                          height: 3,
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Color(0xFFE8B4B8), // blush
-                                Color(0xFF93C9BD), // mint
-                                Color(0xFFE8C87A), // sunrise
-                              ],
-                              stops: [0.0, 0.5, 1.0],
-                            ),
-                          ),
+                          height: 2,
+                          color: AppColors.divider,
                         ),
                       ),
                     ),
 
-                    // ── Slot labels below ticks ───────────────────────────
+                    // ── Slot labels below ticks ───────────────────────────────
                     ..._slots.map((slot) {
                       final x = BabyTimelineUtils.xForSlot(slot, _slots);
                       final milestone = milestoneMap[slot.key];
+                      final label = _humanLabel(slot);
+                      if (label.isEmpty && milestone == null) {
+                        return const SizedBox.shrink();
+                      }
                       return Positioned(
                         left: x - 24,
                         top: lineY + 14,
@@ -213,22 +242,23 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
                                   style: const TextStyle(fontSize: 10),
                                   textAlign: TextAlign.center,
                                 ),
-                              Text(
-                                slot.label,
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  color:
-                                      AppColors.warmBrown.withOpacity(0.5),
+                              if (label.isNotEmpty)
+                                Text(
+                                  label,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w500,
+                                    color: AppColors.warmTaupe,
+                                  ),
+                                  textAlign: TextAlign.center,
                                 ),
-                                textAlign: TextAlign.center,
-                              ),
                             ],
                           ),
                         ),
                       );
                     }),
 
-                    // ── Photo polaroids ───────────────────────────────────
+                    // ── Photo polaroids ───────────────────────────────────────
                     ..._slots.map((slot) {
                       final entry = box.get(slot.key);
                       final x = BabyTimelineUtils.xForSlot(slot, _slots);

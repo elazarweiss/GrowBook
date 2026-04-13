@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -53,17 +55,23 @@ class _BabyEntryScreenState extends State<BabyEntryScreen> {
       );
       if (picked == null) return;
 
-      // Copy to stable app documents directory
-      final docsDir = await getApplicationDocumentsDirectory();
-      final destDir = Directory('${docsDir.path}/baby_photos');
-      if (!destDir.existsSync()) destDir.createSync(recursive: true);
-
-      final fileName =
-          '${widget.slot.key}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final destPath = '${destDir.path}/$fileName';
-      await File(picked.path).copy(destPath);
-
-      if (mounted) setState(() => _photoPath = destPath);
+      if (kIsWeb) {
+        // On web: store as base64 data URL (no file system access)
+        final bytes = await picked.readAsBytes();
+        final b64 = base64Encode(bytes);
+        final dataUrl = 'data:image/jpeg;base64,$b64';
+        if (mounted) setState(() => _photoPath = dataUrl);
+      } else {
+        // Native: copy to stable app documents directory
+        final docsDir = await getApplicationDocumentsDirectory();
+        final destDir = Directory('${docsDir.path}/baby_photos');
+        if (!destDir.existsSync()) destDir.createSync(recursive: true);
+        final fileName =
+            '${widget.slot.key}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final destPath = '${destDir.path}/$fileName';
+        await File(picked.path).copy(destPath);
+        if (mounted) setState(() => _photoPath = destPath);
+      }
     } finally {
       if (mounted) setState(() => _pickingPhoto = false);
     }
@@ -162,14 +170,7 @@ class _BabyEntryScreenState extends State<BabyEntryScreen> {
                                 children: [
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(15),
-                                    child: Image.file(
-                                      File(_photoPath!),
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) =>
-                                          _emptyPhotoHint(),
-                                    ),
+                                    child: _buildImage(),
                                   ),
                                   Positioned(
                                     bottom: AppSpacing.sm,
@@ -246,6 +247,31 @@ class _BabyEntryScreenState extends State<BabyEntryScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildImage() {
+    final path = _photoPath!;
+    if (kIsWeb || path.startsWith('data:')) {
+      final comma = path.indexOf(',');
+      if (comma != -1) {
+        final bytes = base64Decode(path.substring(comma + 1));
+        return Image.memory(
+          bytes,
+          width: double.infinity,
+          height: double.infinity,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _emptyPhotoHint(),
+        );
+      }
+      return _emptyPhotoHint();
+    }
+    return Image.file(
+      File(path),
+      width: double.infinity,
+      height: double.infinity,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _emptyPhotoHint(),
     );
   }
 

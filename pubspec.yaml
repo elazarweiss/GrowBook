@@ -16,6 +16,8 @@ dependencies:
   hive_flutter: ^1.1.0
   path_provider: ^2.1.2
   image_picker: ^1.1.2
+  file_picker: ^8.0.0
+  exif: ^3.3.0
 
 dev_dependencies:
   flutter_test:
