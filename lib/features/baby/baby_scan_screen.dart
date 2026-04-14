@@ -552,7 +552,7 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
       widget.proposals.where((p) => p.importEnabled && p.hasExisting).length;
   int get _totalPhotos => widget.proposals
       .where((p) => p.importEnabled)
-      .fold(0, (sum, p) => sum + p.candidates.length);
+      .fold(0, (sum, p) => sum + p.selectedCount);
 
   Future<void> _import() async {
     setState(() => _saving = true);
@@ -608,12 +608,18 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
               childAspectRatio: 0.75,
             ),
             itemCount: widget.proposals.length,
-            itemBuilder: (context, i) => _SlotCard(
-              proposal: widget.proposals[i],
-              onToggle: () => setState(() {
-                widget.proposals[i].importEnabled =
-                    !widget.proposals[i].importEnabled;
-              }),
+            itemBuilder: (context, i) => GestureDetector(
+              onTap: () async {
+                await showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) =>
+                      _SlotPhotoSheet(proposal: widget.proposals[i]),
+                );
+                setState(() {}); // refresh counts after sheet changes
+              },
+              child: _SlotCard(proposal: widget.proposals[i]),
             ),
           ),
         ),
@@ -685,9 +691,8 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
 
 class _SlotCard extends StatelessWidget {
   final ScanProposal proposal;
-  final VoidCallback onToggle;
 
-  const _SlotCard({required this.proposal, required this.onToggle});
+  const _SlotCard({required this.proposal});
 
   String get _label {
     final slot = proposal.slot;
@@ -705,71 +710,115 @@ class _SlotCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = proposal.importEnabled;
     final best = proposal.bestCandidate;
+    final selected = proposal.selectedCount;
+    final total = proposal.candidates.length;
 
-    return GestureDetector(
-      onTap: onToggle,
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 150),
-        opacity: enabled ? 1.0 : 0.45,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: enabled ? AppColors.sageGreen : AppColors.divider,
-              width: enabled ? 2 : 1,
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 150),
+      opacity: enabled ? 1.0 : 0.38,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: enabled ? AppColors.sageGreen : AppColors.divider,
+            width: enabled ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(12)),
-                  child: best != null
-                      ? _thumbnail(best)
-                      : _placeholder(),
-                ),
-              ),
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_label,
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Thumbnail with selection badge
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ClipRRect(
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(12)),
+                    child: best != null ? _thumbnail(best) : _placeholder(),
+                  ),
+                  // "X of Y" badge
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.55),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '$selected/$total',
                         style: GoogleFonts.inter(
-                            fontSize: 12,
+                            fontSize: 9,
                             fontWeight: FontWeight.w600,
-                            color: AppColors.warmBrown)),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Text(
-                          '${proposal.candidates.length} photo${proposal.candidates.length > 1 ? 's' : ''}',
-                          style: GoogleFonts.inter(
-                              fontSize: 10, color: AppColors.warmTaupe),
-                        ),
-                        const Spacer(),
-                        if (proposal.hasExisting)
-                          _Badge('UPDATE', AppColors.babySunrise)
-                        else
-                          _Badge('NEW', AppColors.sageGreen),
-                      ],
+                            color: Colors.white),
+                      ),
                     ),
-                  ],
-                ),
+                  ),
+                  // Tap hint
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.45),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'tap to review',
+                          style: GoogleFonts.inter(
+                              fontSize: 8,
+                              color: Colors.white.withOpacity(0.9)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            // Footer
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_label,
+                      style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.warmBrown)),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      if (proposal.hasExisting)
+                        _Badge('UPDATE', AppColors.babySunrise)
+                      else
+                        _Badge('NEW', AppColors.sageGreen),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -777,7 +826,6 @@ class _SlotCard extends StatelessWidget {
 
   Widget _thumbnail(ScanCandidate candidate) {
     if (kIsWeb) {
-      // Serve via companion server
       final url =
           'http://localhost:7272/photo?path=${Uri.encodeComponent(candidate.serverPath)}';
       return Image.network(
@@ -789,7 +837,6 @@ class _SlotCard extends StatelessWidget {
             progress == null ? child : _placeholder(),
       );
     }
-    // Native: read from local file
     return Image.file(
       candidate.localFile!,
       fit: BoxFit.cover,
@@ -804,6 +851,271 @@ class _SlotCard extends StatelessWidget {
             child: Icon(Icons.image_outlined,
                 size: 32, color: AppColors.sageGreen)),
       );
+}
+
+// ─── Per-photo selection sheet ────────────────────────────────────────────────
+
+class _SlotPhotoSheet extends StatefulWidget {
+  final ScanProposal proposal;
+  const _SlotPhotoSheet({required this.proposal});
+
+  @override
+  State<_SlotPhotoSheet> createState() => _SlotPhotoSheetState();
+}
+
+class _SlotPhotoSheetState extends State<_SlotPhotoSheet> {
+  ScanProposal get p => widget.proposal;
+
+  int get _selected => p.candidates.where((c) => c.selected).length;
+
+  String get _slotLabel {
+    switch (p.slot.kind) {
+      case BabyAgeKind.week:
+        return p.slot.value == 0 ? 'Birth' : 'Week ${p.slot.value}';
+      case BabyAgeKind.month:
+        return '${p.slot.value} months old';
+      case BabyAgeKind.year:
+        return '${p.slot.value} year${p.slot.value > 1 ? 's' : ''} old';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.88,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              // Drag handle
+              Container(
+                margin: const EdgeInsets.only(top: 10),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.divider,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 8, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_slotLabel,
+                              style: GoogleFonts.inter(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.warmBrown)),
+                          Text(
+                            '$_selected of ${p.candidates.length} selected',
+                            style: GoogleFonts.inter(
+                                fontSize: 12, color: AppColors.warmTaupe),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Import toggle
+                    Row(
+                      children: [
+                        Text('Import',
+                            style: GoogleFonts.inter(
+                                fontSize: 12, color: AppColors.warmTaupe)),
+                        Switch(
+                          value: p.importEnabled,
+                          onChanged: (v) =>
+                              setState(() => p.importEnabled = v),
+                          activeColor: AppColors.sageGreen,
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      color: AppColors.warmTaupe,
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Select all / none
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                child: Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() {
+                        for (final c in p.candidates) {
+                          c.selected = true;
+                        }
+                      }),
+                      child: Text('Select all',
+                          style: GoogleFonts.inter(
+                              fontSize: 12, color: AppColors.sageGreen)),
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        for (final c in p.candidates) {
+                          c.selected = false;
+                        }
+                      }),
+                      child: Text('Select none',
+                          style: GoogleFonts.inter(
+                              fontSize: 12, color: AppColors.warmTaupe)),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(height: 1),
+
+              // Photo grid
+              Expanded(
+                child: GridView.builder(
+                  controller: scrollController,
+                  padding: const EdgeInsets.all(10),
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 6,
+                    mainAxisSpacing: 6,
+                  ),
+                  itemCount: p.candidates.length,
+                  itemBuilder: (ctx, i) {
+                    final c = p.candidates[i];
+                    return GestureDetector(
+                      onTap: () =>
+                          setState(() => c.selected = !c.selected),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // Photo
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: _photoWidget(c),
+                          ),
+                          // Dimmed overlay when deselected
+                          if (!c.selected)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                  color: Colors.black.withOpacity(0.52)),
+                            ),
+                          // Checkmark circle
+                          Positioned(
+                            top: 5,
+                            right: 5,
+                            child: Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                color: c.selected
+                                    ? AppColors.sageGreen
+                                    : Colors.white.withOpacity(0.75),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: Colors.white, width: 1.5),
+                              ),
+                              child: c.selected
+                                  ? const Icon(Icons.check,
+                                      size: 13, color: Colors.white)
+                                  : null,
+                            ),
+                          ),
+                          // Date label at bottom
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                  bottom: Radius.circular(8)),
+                              child: Container(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 3),
+                                color: Colors.black.withOpacity(0.45),
+                                child: Text(
+                                  _shortDate(c.photoDate),
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.inter(
+                                      fontSize: 8,
+                                      color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              // Done button
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.sageGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      _selected == 0
+                          ? 'Skip this slot'
+                          : 'Done — $_selected photo${_selected == 1 ? '' : 's'}',
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _photoWidget(ScanCandidate c) {
+    if (kIsWeb) {
+      final url =
+          'http://localhost:7272/photo?path=${Uri.encodeComponent(c.serverPath)}';
+      return Image.network(url,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _photoPlaceholder());
+    }
+    return Image.file(c.localFile!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _photoPlaceholder());
+  }
+
+  Widget _photoPlaceholder() => Container(
+        color: AppColors.accentSoft,
+        child: const Center(
+            child: Icon(Icons.broken_image_outlined,
+                color: AppColors.sageGreen, size: 24)),
+      );
+
+  String _shortDate(DateTime dt) =>
+      '${dt.day}/${dt.month}/${dt.year.toString().substring(2)}';
 }
 
 class _Badge extends StatelessWidget {
