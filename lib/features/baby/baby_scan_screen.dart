@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -27,6 +28,7 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
   @override
   void initState() {
     super.initState();
+    if (kIsWeb) return; // web can't scan folders — show static message
     _folderPath = BabyRepository.instance.cameraFolderPath;
     if (_folderPath != null) {
       _startScan(_folderPath!);
@@ -36,7 +38,7 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
   Future<void> _pickAndScan() async {
     final path = await BabyScanController.pickFolder();
     if (path == null) {
-      if (mounted) context.pop();
+      // User cancelled the picker (or picker failed) — stay on pick screen
       return;
     }
     await BabyRepository.instance.saveCameraFolderPath(path);
@@ -92,6 +94,7 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
   }
 
   Widget _buildBody() {
+    if (kIsWeb) return const _WebNotSupportedView();
     switch (_phase) {
       case _Phase.pickOrScan:
         return _PickFolderView(onPick: _pickAndScan);
@@ -121,6 +124,75 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
 }
 
 enum _Phase { pickOrScan, scanning, results, empty, error }
+
+// ─── Pick folder view ─────────────────────────────────────────────────────────
+
+// ─── Web not supported view ───────────────────────────────────────────────────
+
+class _WebNotSupportedView extends StatelessWidget {
+  const _WebNotSupportedView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+              child: Text('Auto-Import',
+                  style: GoogleFonts.inter(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.warmBrown)),
+            ),
+            IconButton(
+                icon: const Icon(Icons.close),
+                color: AppColors.warmTaupe,
+                onPressed: () => context.pop()),
+          ]),
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+                color: AppColors.accentSoft,
+                borderRadius: BorderRadius.circular(20)),
+            child: Column(children: [
+              Icon(Icons.desktop_windows_outlined,
+                  size: 56, color: AppColors.sageGreen),
+              const SizedBox(height: 16),
+              Text('Use the Windows desktop app',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.warmBrown,
+                      height: 1.4)),
+              const SizedBox(height: 8),
+              Text(
+                'Folder scanning needs direct file system access,\n'
+                'which isn\'t available in the browser.\n\n'
+                'Run the app with:\n'
+                'run_growbook_windows.bat\n'
+                '— or —\n'
+                'flutter run -d windows',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                    fontSize: 13, color: AppColors.warmTaupe, height: 1.6),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 20),
+          _TipRow(
+              icon: Icons.check_circle_outline,
+              text:
+                  'Everything else (timeline, photos, milestones) works fine in the browser.'),
+        ],
+      ),
+    );
+  }
+}
 
 // ─── Pick folder view ─────────────────────────────────────────────────────────
 

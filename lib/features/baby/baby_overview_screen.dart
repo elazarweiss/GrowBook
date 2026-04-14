@@ -8,6 +8,7 @@ import '../../core/models/baby_journey_model.dart';
 import '../../core/models/baby_slot_model.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/baby_timeline_utils.dart';
+import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
 import 'widgets/baby_clothesline_painter.dart';
 import 'widgets/baby_photo_polaroid.dart';
@@ -262,6 +263,7 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
                           ? entry!.photoPaths.first
                           : null,
                       caption: entry?.caption,
+                      photoCount: entry?.photoPaths.length ?? 0,
                       x: x,
                       lineY: lineY,
                       canvasH: canvasH,
@@ -277,13 +279,21 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
     );
   }
 
-  /// Returns the label to show above the wire for major slots only.
+  /// Returns the label to show above the wire tick.
+  /// Named milestones always show; other slots only show at major intervals.
   static String? _milestoneLabel(BabySlot slot) {
+    // Named milestone takes priority
+    final m = babyMilestones
+        .where((m) => m.slotKey == slot.key)
+        .cast<BabyMilestoneInfo?>()
+        .firstOrNull;
+    if (m != null) return '${m.emoji} ${m.label}';
+
+    // Fall back to time labels for major slots
     switch (slot.kind) {
       case BabyAgeKind.week:
-        if (slot.value == 0) return 'Birth';
         if (slot.value % 4 == 0) return '${slot.value} wk';
-        return null; // minor weeks get no label above wire
+        return null;
       case BabyAgeKind.month:
         if (slot.value % 3 != 0) return null;
         if (slot.value == 12) return '1 year';

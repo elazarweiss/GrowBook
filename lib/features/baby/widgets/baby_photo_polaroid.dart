@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/models/baby_slot_model.dart';
+import '../../../data/baby_data.dart';
 
 class BabyPhotoPolaroid extends StatelessWidget {
   final BabySlot slot;
   final String? photoPath;
   final String? caption;
+  final int photoCount;
   final VoidCallback onTap;
   final double x;
   final double lineY;
@@ -21,6 +23,7 @@ class BabyPhotoPolaroid extends StatelessWidget {
     required this.slot,
     required this.photoPath,
     required this.caption,
+    required this.photoCount,
     required this.onTap,
     required this.x,
     required this.lineY,
@@ -42,9 +45,15 @@ class BabyPhotoPolaroid extends StatelessWidget {
   }
 
   static String _slotLabel(BabySlot slot) {
+    // Milestone name takes priority over generic week label
+    final milestone = babyMilestones
+        .where((m) => m.slotKey == slot.key)
+        .cast<BabyMilestoneInfo?>()
+        .firstOrNull;
+    if (milestone != null) return '${milestone.emoji} ${milestone.label}';
     switch (slot.kind) {
       case BabyAgeKind.week:
-        return slot.value == 0 ? 'Birth' : 'Week ${slot.value}';
+        return 'Week ${slot.value}';
       case BabyAgeKind.month:
         return '${slot.value} months';
       case BabyAgeKind.year:
@@ -116,15 +125,40 @@ class BabyPhotoPolaroid extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(5, 5, 5, 0),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(9),
-              child: SizedBox(
-                width: cardW - 10,
-                height: cardH,
-                child: photoPath != null
-                    ? _buildImage(cardW, cardH)
-                    : _placeholder(cardW, cardH),
-              ),
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: SizedBox(
+                    width: cardW - 10,
+                    height: cardH,
+                    child: photoPath != null
+                        ? _buildImage(cardW, cardH)
+                        : _placeholder(cardW, cardH),
+                  ),
+                ),
+                // Multi-photo count badge
+                if (photoCount > 1)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '$photoCount',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           SizedBox(
