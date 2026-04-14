@@ -557,6 +557,8 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
   Future<void> _import() async {
     setState(() => _saving = true);
     await BabyScanController.saveSelected(widget.proposals);
+    // Fire-and-forget AI tagging — runs in background after user returns to timeline
+    BabyScanController.analyzeImported(widget.proposals);
     if (mounted) context.pop();
   }
 

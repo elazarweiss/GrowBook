@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
@@ -183,15 +182,21 @@ class BabyPhotoPolaroid extends StatelessWidget {
 
   Widget _buildImage(double cardW, double cardH) {
     final path = photoPath!;
-    if (kIsWeb || path.startsWith('data:')) {
+    if (path.startsWith('data:')) {
       final comma = path.indexOf(',');
-      if (comma != -1) {
-        final bytes = base64Decode(path.substring(comma + 1));
-        return Image.memory(bytes,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _placeholder(cardW, cardH));
-      }
-      return _placeholder(cardW, cardH);
+      if (comma == -1) return _placeholder(cardW, cardH);
+      return Image.memory(
+        base64Decode(path.substring(comma + 1)),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _placeholder(cardW, cardH),
+      );
+    }
+    if (path.startsWith('server:')) {
+      return Image.network(
+        'http://localhost:7272/photo?path=${Uri.encodeComponent(path.substring(7))}',
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _placeholder(cardW, cardH),
+      );
     }
     return Image.file(File(path),
         fit: BoxFit.cover,

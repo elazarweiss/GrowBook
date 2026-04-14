@@ -7,10 +7,20 @@ sparkle button (✨). Keep this window open while using GrowBook.
 
 Usage:  python growbook_scanner.py
 """
-import os, re, json, struct
+import os, re, json, struct, base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+from concurrent.futures import ThreadPoolExecutor
+
+# ── AI analysis setup ──────────────────────────────────────────────────────────
+try:
+    import anthropic as _anthropic
+    _ai_client = _anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY', ''))
+    AI_AVAILABLE = bool(os.environ.get('ANTHROPIC_API_KEY'))
+except ImportError:
+    _ai_client = None
+    AI_AVAILABLE = False
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 SCAN_FOLDER = r"C:\Users\elazar\Dropbox\Camera Uploads"
@@ -142,6 +152,58 @@ def scan_folder():
     print(f"  Scan complete: {count} photos across {len(groups)} slots")
     return groups, error
 
+# ── AI photo analysis ─────────────────────────────────────────────────────────
+
+_ANALYZE_PROMPT = """Analyze this baby photo. Return ONLY valid JSON, nothing else:
+{
+  "people": [],
+  "mood": "",
+  "activity": "",
+  "is_milestone": false,
+  "caption": ""
+}
+
+Rules:
+- "people": array of any that apply: "baby_solo", "with_mom", "with_dad", "with_siblings", "with_grandparents", "family_group"
+- "mood": exactly one of: "happy", "calm", "sleeping", "crying", "silly", "surprised"
+- "activity": exactly one of: "bath", "feeding", "play", "outdoors", "tummy_time", "reading", "travel", "milestone", "other"
+- "is_milestone": true only for clear developmental firsts (first smile, crawl, steps, words, etc.)
+- "caption": one warm, concise English sentence under 60 characters describing the moment"""
+
+def analyze_photo(path):
+    """Analyze a single photo with Claude Vision. Returns tag dict or None."""
+    if not AI_AVAILABLE or _ai_client is None:
+        return None
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        ext = os.path.splitext(path)[1].lower()
+        media_type = ('image/jpeg' if ext in ('.jpg', '.jpeg')
+                      else 'image/png' if ext == '.png'
+                      else 'image/webp')
+        b64 = base64.standard_b64encode(data).decode()
+
+        response = _ai_client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=300,
+            messages=[{
+                'role': 'user',
+                'content': [
+                    {'type': 'image',
+                     'source': {'type': 'base64', 'media_type': media_type, 'data': b64}},
+                    {'type': 'text', 'text': _ANALYZE_PROMPT},
+                ]
+            }]
+        )
+        text = response.content[0].text.strip()
+        start = text.find('{')
+        end = text.rfind('}') + 1
+        if start != -1 and end > start:
+            return json.loads(text[start:end])
+    except Exception as e:
+        print(f'  ⚠ Analysis failed for {os.path.basename(path)}: {e}')
+    return None
+
 # ── HTTP server ────────────────────────────────────────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -157,6 +219,61 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self._cors()
         self.end_headers()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == '/analyze':
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body)
+                paths = data.get('paths', [])
+            except Exception:
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            if not AI_AVAILABLE:
+                body = json.dumps({
+                    'tags': {},
+                    'error': 'ANTHROPIC_API_KEY not set. Run: set ANTHROPIC_API_KEY=sk-...'
+                }).encode()
+                self.send_response(200)
+                self._cors()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            # Validate paths are within scan folder
+            scan_abs = os.path.abspath(SCAN_FOLDER)
+            valid_paths = [
+                p for p in paths
+                if os.path.isfile(p) and os.path.abspath(p).startswith(scan_abs)
+            ]
+
+            print(f'  Analyzing {len(valid_paths)} photos with Claude Vision…')
+
+            tags = {}
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = {executor.submit(analyze_photo, p): p for p in valid_paths}
+                for future, p in futures.items():
+                    result = future.result()
+                    if result:
+                        tags[p] = result
+                        print(f'  ✓ {os.path.basename(p)}: {result.get("activity", "?")} / {result.get("mood", "?")}')
+
+            response_body = json.dumps({'tags': tags}).encode()
+            self.send_response(200)
+            self._cors()
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -206,12 +323,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    ai_status = '✓ AI tagging ON  (Claude Vision)' if AI_AVAILABLE else '✗ AI tagging OFF (set ANTHROPIC_API_KEY)'
     print()
     print('  ┌─────────────────────────────────────────────┐')
     print('  │          GrowBook Scanner                   │')
     print('  ├─────────────────────────────────────────────┤')
     print(f'  │  Folder : {SCAN_FOLDER[:35]:<35} │')
     print(f'  │  Port   : {PORT:<35} │')
+    print(f'  │  AI     : {ai_status:<35} │')
     print('  ├─────────────────────────────────────────────┤')
     print('  │  Keep this window open, then click ✨       │')
     print('  │  in GrowBook to scan and import photos.     │')
