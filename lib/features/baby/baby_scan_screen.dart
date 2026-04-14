@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -23,22 +24,40 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
   ScanProgress _progress = const ScanProgress(0, 0);
   List<ScanProposal> _proposals = [];
   String? _error;
+  bool _checkingServer = false;
 
   @override
   void initState() {
     super.initState();
-    _folderPath = BabyRepository.instance.cameraFolderPath;
-    if (_folderPath != null) {
-      _startScan(_folderPath!);
+    if (kIsWeb) {
+      // On web, auto-check if server is running and scan immediately if so
+      _autoConnectIfServerRunning();
+    } else {
+      _folderPath = BabyRepository.instance.cameraFolderPath;
+      if (_folderPath != null) {
+        _startScan(_folderPath!);
+      }
     }
+  }
+
+  Future<void> _autoConnectIfServerRunning() async {
+    setState(() => _checkingServer = true);
+    final running = await BabyScanController.checkServerRunning();
+    if (!mounted) return;
+    setState(() => _checkingServer = false);
+    if (running) {
+      _startWebScan();
+    }
+    // else: show the server setup screen
+  }
+
+  Future<void> _startWebScan() async {
+    _startScan('companion-server');
   }
 
   Future<void> _pickAndScan() async {
     final path = await BabyScanController.pickFolder();
-    if (path == null) {
-      // User cancelled the picker (or picker failed) — stay on pick screen
-      return;
-    }
+    if (path == null) return;
     await BabyRepository.instance.saveCameraFolderPath(path);
     _startScan(path);
   }
@@ -92,9 +111,14 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
   }
 
   Widget _buildBody() {
+    if (_checkingServer) {
+      return const Center(child: CircularProgressIndicator());
+    }
     switch (_phase) {
       case _Phase.pickOrScan:
-        return _PickFolderView(onPick: _pickAndScan);
+        return kIsWeb
+            ? _ServerSetupView(onConnect: _startWebScan)
+            : _PickFolderView(onPick: _pickAndScan);
       case _Phase.scanning:
         return _ScanningView(
           folderPath: _folderPath!,
@@ -114,7 +138,7 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
       case _Phase.error:
         return _ErrorView(
           message: _error ?? 'Unknown error',
-          onRetry: () => _startScan(_folderPath!),
+          onRetry: kIsWeb ? _startWebScan : () => _startScan(_folderPath!),
         );
     }
   }
@@ -122,9 +146,216 @@ class _BabyScanEntryPointState extends State<BabyScanEntryPoint> {
 
 enum _Phase { pickOrScan, scanning, results, empty, error }
 
-// ─── Pick folder view ─────────────────────────────────────────────────────────
+// ─── Web: server setup view ───────────────────────────────────────────────────
 
-// ─── Pick folder view ─────────────────────────────────────────────────────────
+class _ServerSetupView extends StatefulWidget {
+  final VoidCallback onConnect;
+  const _ServerSetupView({required this.onConnect});
+
+  @override
+  State<_ServerSetupView> createState() => _ServerSetupViewState();
+}
+
+class _ServerSetupViewState extends State<_ServerSetupView> {
+  bool _connecting = false;
+  String? _connectError;
+
+  Future<void> _tryConnect() async {
+    setState(() {
+      _connecting = true;
+      _connectError = null;
+    });
+    final ok = await BabyScanController.checkServerRunning();
+    if (!mounted) return;
+    if (ok) {
+      widget.onConnect();
+    } else {
+      setState(() {
+        _connecting = false;
+        _connectError = 'Scanner not found on port 7272.\nMake sure growbook_scanner.py is running.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+              child: Text('Auto-Import',
+                  style: GoogleFonts.inter(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.warmBrown)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close),
+              color: AppColors.warmTaupe,
+              onPressed: () => context.pop(),
+            )
+          ]),
+
+          const SizedBox(height: 20),
+
+          // How it works card
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: AppColors.accentSoft,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.auto_awesome, color: AppColors.sageGreen, size: 22),
+                  const SizedBox(width: 10),
+                  Text('How automatic import works',
+                      style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.warmBrown)),
+                ]),
+                const SizedBox(height: 16),
+                _Step(
+                  number: '1',
+                  text: 'Run growbook_scanner.py from the project folder — it\'s a small Python script that watches your Camera Uploads folder.',
+                ),
+                const SizedBox(height: 10),
+                _Step(
+                  number: '2',
+                  text: 'Come back here and click "Scan Now". GrowBook will read the photo dates and sort them into Refael\'s timeline automatically.',
+                ),
+                const SizedBox(height: 10),
+                _Step(
+                  number: '3',
+                  text: 'Review the suggestions, deselect anything you don\'t want, then import. Done!',
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Command to run
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E293B),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Run this in a terminal:',
+                    style: GoogleFonts.inter(
+                        fontSize: 11, color: const Color(0xFF94A3B8))),
+                const SizedBox(height: 8),
+                Text(
+                  'python growbook_scanner.py',
+                  style: GoogleFonts.robotoMono(
+                      fontSize: 14,
+                      color: const Color(0xFF7DD3FC),
+                      fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+
+          if (_connectError != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.moodAnxious.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_outlined,
+                      color: AppColors.moodAnxious, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(_connectError!,
+                        style: GoogleFonts.inter(
+                            fontSize: 12, color: AppColors.moodAnxious)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const Spacer(),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              icon: _connecting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.play_arrow_rounded),
+              label: Text(_connecting ? 'Connecting…' : 'Scan Now'),
+              onPressed: _connecting ? null : _tryConnect,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.sageGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Step extends StatelessWidget {
+  final String number;
+  final String text;
+  const _Step({required this.number, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: AppColors.sageGreen,
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(number,
+                style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white)),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(text,
+              style: GoogleFonts.inter(
+                  fontSize: 13, color: AppColors.warmTaupe, height: 1.45)),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Native: pick folder view ─────────────────────────────────────────────────
 
 class _PickFolderView extends StatelessWidget {
   final VoidCallback onPick;
@@ -176,7 +407,7 @@ class _PickFolderView extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   'GrowBook will scan your photos, read their dates,\n'
-                  'and automatically fill your baby\'s timeline.',
+                  'and automatically fill Refael\'s timeline.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.inter(
                       fontSize: 13, color: AppColors.warmTaupe, height: 1.5),
@@ -249,9 +480,8 @@ class _ScanningView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pct = progress.total == 0
-        ? null
-        : progress.fraction;
+    final pct = progress.total == 0 ? null : progress.fraction;
+    final isWebScan = folderPath == 'companion-server';
 
     return Padding(
       padding: const EdgeInsets.all(40),
@@ -267,7 +497,7 @@ class _ScanningView extends StatelessWidget {
                   color: AppColors.warmBrown)),
           const SizedBox(height: 8),
           Text(
-            folderPath,
+            isWebScan ? 'Reading your Camera Uploads folder…' : folderPath,
             style: GoogleFonts.inter(fontSize: 12, color: AppColors.warmTaupe),
             textAlign: TextAlign.center,
             maxLines: 2,
@@ -287,8 +517,7 @@ class _ScanningView extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               '${progress.processed} / ${progress.total} photos',
-              style:
-                  GoogleFonts.inter(fontSize: 12, color: AppColors.warmTaupe),
+              style: GoogleFonts.inter(fontSize: 12, color: AppColors.warmTaupe),
             ),
           ],
         ],
@@ -335,7 +564,6 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Header
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
           child: Row(
@@ -369,7 +597,6 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
 
         const SizedBox(height: 12),
 
-        // Slot grid
         Expanded(
           child: GridView.builder(
             padding: const EdgeInsets.symmetric(
@@ -391,7 +618,6 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
           ),
         ),
 
-        // Bottom action bar
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -411,7 +637,8 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
                               fontWeight: FontWeight.w600,
                               color: AppColors.sageGreen)),
                     if (_updateSlots > 0)
-                      Text('$_updateSlots update${_updateSlots > 1 ? 's' : ''}',
+                      Text(
+                          '$_updateSlots update${_updateSlots > 1 ? 's' : ''}',
                           style: GoogleFonts.inter(
                               fontSize: 13, color: AppColors.warmTaupe)),
                   ],
@@ -435,9 +662,10 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
                         height: 18,
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
-                    : Text('Import $_totalPhotos photo${_totalPhotos == 1 ? '' : 's'}',
-                        style: GoogleFonts.inter(
-                            fontWeight: FontWeight.w600)),
+                    : Text(
+                        'Import $_totalPhotos photo${_totalPhotos == 1 ? '' : 's'}',
+                        style:
+                            GoogleFonts.inter(fontWeight: FontWeight.w600)),
               ),
             ],
           ),
@@ -447,8 +675,7 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
   }
 
   String _summarySentence() {
-    final total = widget.proposals
-        .fold(0, (sum, p) => sum + p.candidates.length);
+    final total = widget.proposals.fold(0, (sum, p) => sum + p.candidates.length);
     final slots = widget.proposals.length;
     return '$total photo${total > 1 ? 's' : ''} across $slots slot${slots > 1 ? 's' : ''}';
   }
@@ -503,21 +730,15 @@ class _SlotCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Thumbnail
               Expanded(
                 child: ClipRRect(
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(12)),
                   child: best != null
-                      ? Image.file(best.file,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          errorBuilder: (_, __, ___) => _placeholder())
+                      ? _thumbnail(best)
                       : _placeholder(),
                 ),
               ),
-
-              // Footer
               Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -551,6 +772,29 @@ class _SlotCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _thumbnail(ScanCandidate candidate) {
+    if (kIsWeb) {
+      // Serve via companion server
+      final url =
+          'http://localhost:7272/photo?path=${Uri.encodeComponent(candidate.serverPath)}';
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        errorBuilder: (_, __, ___) => _placeholder(),
+        loadingBuilder: (_, child, progress) =>
+            progress == null ? child : _placeholder(),
+      );
+    }
+    // Native: read from local file
+    return Image.file(
+      candidate.localFile!,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      errorBuilder: (_, __, ___) => _placeholder(),
     );
   }
 
@@ -589,8 +833,7 @@ class _EmptyResultView extends StatelessWidget {
   final String folderPath;
   final VoidCallback onRescan;
 
-  const _EmptyResultView(
-      {required this.folderPath, required this.onRescan});
+  const _EmptyResultView({required this.folderPath, required this.onRescan});
 
   @override
   Widget build(BuildContext context) {
@@ -599,8 +842,7 @@ class _EmptyResultView extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.check_circle_outline,
-              size: 64, color: AppColors.babyMint),
+          Icon(Icons.check_circle_outline, size: 64, color: AppColors.babyMint),
           const SizedBox(height: 20),
           Text('All caught up!',
               style: GoogleFonts.inter(
@@ -619,8 +861,7 @@ class _EmptyResultView extends StatelessWidget {
               onPressed: onRescan, child: const Text('Scan all photos again')),
           const SizedBox(height: 8),
           TextButton(
-              onPressed: () => context.pop(),
-              child: const Text('Close')),
+              onPressed: () => context.pop(), child: const Text('Close')),
         ],
       ),
     );
@@ -650,8 +891,8 @@ class _ErrorView extends StatelessWidget {
           const SizedBox(height: 8),
           Text(message,
               textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
-                  fontSize: 12, color: AppColors.warmTaupe)),
+              style:
+                  GoogleFonts.inter(fontSize: 12, color: AppColors.warmTaupe)),
           const SizedBox(height: 32),
           ElevatedButton(
             onPressed: onRetry,
@@ -662,8 +903,7 @@ class _ErrorView extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           TextButton(
-              onPressed: () => context.pop(),
-              child: const Text('Close')),
+              onPressed: () => context.pop(), child: const Text('Close')),
         ],
       ),
     );
