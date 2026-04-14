@@ -24,6 +24,18 @@ class BabyRepository {
     _entries = await Hive.openBox<BabyEntry>(_entriesBoxName);
     _journeys = await Hive.openBox<BabyJourney>(_journeyBoxName);
     _settings = await Hive.openBox(_settingsBoxName);
+
+    // Dev shortcut: pre-seed Refael's data so setup screen is skipped.
+    // Remove this block when opening the app to other babies.
+    if (_journeys.get(_journeyKey) == null) {
+      await _journeys.put(
+        _journeyKey,
+        BabyJourney(
+          babyName: 'Refael',
+          birthDate: DateTime(2026, 3, 28),
+        ),
+      );
+    }
   }
 
   // ── Camera folder settings ─────────────────────────────────────────────────
