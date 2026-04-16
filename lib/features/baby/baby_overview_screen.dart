@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -265,7 +266,15 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
           // Wire sits at 48% — even split between above and below polaroids
           final double lineY = canvasH * 0.48;
 
-          return SingleChildScrollView(
+          return ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse,
+                PointerDeviceKind.trackpad,
+              },
+            ),
+            child: SingleChildScrollView(
             controller: _scrollController,
             scrollDirection: Axis.horizontal,
             physics: const BouncingScrollPhysics(),
@@ -304,7 +313,8 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
                 ],
               ),
             ),
-          );
+          ),  // SingleChildScrollView
+          );  // ScrollConfiguration
         });
       },
     );
