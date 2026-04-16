@@ -4,6 +4,7 @@ import '../../features/baby/baby_overview_screen.dart';
 import '../../features/baby/baby_setup_screen.dart';
 import '../../features/baby/baby_entry_screen.dart';
 import '../../features/baby/baby_import_screen.dart';
+import '../../features/baby/baby_week_editor_screen.dart';
 import '../../features/baby/baby_scan_screen.dart';
 import '../../features/baby/baby_inbox_screen.dart';
 import '../utils/baby_timeline_utils.dart';
@@ -39,7 +40,7 @@ final GoRouter appRouter = GoRouter(
         final slotKey = state.pathParameters['slotKey']!;
         final slot = BabyTimelineUtils.slotForKey(slotKey);
         return CustomTransitionPage(
-          child: BabyEntryScreen(slot: slot),
+          child: BabyWeekEditorScreen(slot: slot),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return SlideTransition(
               position: Tween<Offset>(

@@ -4,6 +4,7 @@ import 'package:exif/exif.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import '../../core/models/baby_slot_model.dart';
 import '../../core/models/inbox_photo_model.dart';
 import '../../core/models/scan_proposal_model.dart';
 import '../../core/utils/baby_timeline_utils.dart';
@@ -198,6 +199,34 @@ class BabyScanController {
     await BabyRepository.instance.saveLastScanAt(DateTime.now());
   }
 
+  // ── Fetch photos for a single slot from server ───────────────────────────
+
+  /// Calls /scan and returns photos for the given slot as pre-built InboxPhotos.
+  static Future<List<InboxPhoto>> fetchPhotosForSlot(BabySlot slot) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_serverBase/scan'))
+          .timeout(const Duration(seconds: 30));
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final groups = json['groups'] as Map<String, dynamic>? ?? {};
+      final photos = groups[slot.key] as List<dynamic>? ?? [];
+      return photos.map((p) {
+        final serverPath = p['path'] as String;
+        final date =
+            DateTime.tryParse(p['date'] as String? ?? '') ?? DateTime.now();
+        final id = 'server:$serverPath';
+        return InboxPhoto(
+          id: id,
+          path: id,
+          date: date,
+          slotKey: slot.key,
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   // ── Background AI screening ───────────────────────────────────────────────
 
   /// Call after saveSelected() — fire and forget.
@@ -248,6 +277,49 @@ class BabyScanController {
     } catch (_) {
       // Screening is best-effort; silently ignore failures
     }
+  }
+
+  /// Screen only unscreened inbox photos for a specific slot.
+  static Future<void> screenInboxSlot(String slotKey) async {
+    final unscreened = BabyRepository.instance
+        .getUnscreenedInbox()
+        .where((p) => p.slotKey == slotKey)
+        .toList();
+    if (unscreened.isEmpty) return;
+
+    final Map<String, InboxPhoto> pathToPhoto = {};
+    for (final photo in unscreened) {
+      final serverPath = photo.path.startsWith('server:')
+          ? photo.path.substring(7)
+          : photo.path;
+      pathToPhoto[serverPath] = photo;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_serverBase/analyze'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'paths': pathToPhoto.keys.toList()}),
+      ).timeout(const Duration(minutes: 5));
+
+      if (response.statusCode != 200) return;
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final tagMap = json['tags'] as Map<String, dynamic>? ?? {};
+
+      for (final entry in pathToPhoto.entries) {
+        final tagData = tagMap[entry.key] as Map<String, dynamic>?;
+        final screened = entry.value.copyWithScreening(
+          hasBaby: tagData != null ? (tagData['has_baby'] as bool? ?? false) : false,
+          isMilestone: tagData?['is_milestone'] as bool? ?? false,
+          mood: (tagData?['mood'] as String?)?.toLowerCase(),
+          activity: (tagData?['activity'] as String?)?.toLowerCase(),
+          aiCaption: tagData?['caption'] as String?,
+          people: List<String>.from(tagData?['people'] as List? ?? []),
+        );
+        await BabyRepository.instance.saveInboxPhoto(screened);
+      }
+    } catch (_) {}
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

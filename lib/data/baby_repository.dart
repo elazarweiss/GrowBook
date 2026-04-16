@@ -125,6 +125,43 @@ class BabyRepository {
   List<InboxPhoto> getBabyInbox() =>
       _inbox.values.where((p) => p.hasBaby != false).toList();
 
+  /// All photos for a specific slot, sorted chronologically.
+  List<InboxPhoto> getInboxForSlot(String slotKey) =>
+      (_inbox.values.where((p) => p.slotKey == slotKey).toList()
+        ..sort((a, b) => a.date.compareTo(b.date)));
+
+  /// Set which photos are featured on the timeline for a slot.
+  /// Photos stay in the inbox library — tags are preserved.
+  Future<void> setFeaturedPhotos(
+      String slotKey, List<InboxPhoto> photos) async {
+    final paths = photos.map((p) => p.path).toList();
+    final existing = getEntry(slotKey);
+    await saveEntry(BabyEntry(
+      slotKey: slotKey,
+      photoPaths: paths,
+      caption: existing?.caption,
+      updatedAt: DateTime.now(),
+    ));
+    // Copy AI tags to PhotoTag box for each featured photo
+    for (int i = 0; i < photos.length; i++) {
+      final p = photos[i];
+      if (p.mood != null || p.isMilestone || p.aiCaption != null) {
+        await savePhotoTag(
+          slotKey,
+          i,
+          PhotoTag(
+            photoPath: p.path,
+            people: p.people,
+            mood: p.mood ?? 'calm',
+            activity: p.activity ?? 'other',
+            isMilestone: p.isMilestone,
+            aiCaption: p.aiCaption,
+          ),
+        );
+      }
+    }
+  }
+
   int get inboxBabyCount =>
       _inbox.values.where((p) => p.hasBaby != false).length;
 
