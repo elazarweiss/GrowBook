@@ -13,6 +13,16 @@ from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
 
+# ── Load .env if present ───────────────────────────────────────────────────────
+_env_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.isfile(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _k, _, _v = _line.partition('=')
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 # ── AI analysis setup ──────────────────────────────────────────────────────────
 try:
     import anthropic as _anthropic
@@ -154,6 +164,14 @@ def scan_folder():
 
 # ── AI photo analysis ─────────────────────────────────────────────────────────
 
+_SUPPORTED_MEDIA = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+}
+
+
 _ANALYZE_PROMPT = """Analyze this baby photo. Return ONLY valid JSON, nothing else:
 {
   "people": [],
@@ -175,12 +193,12 @@ def analyze_photo(path):
     if not AI_AVAILABLE or _ai_client is None:
         return None
     try:
+        ext = os.path.splitext(path)[1].lower()
+        media_type = _SUPPORTED_MEDIA.get(ext)
+        if media_type is None:
+            return None  # skip HEIC/HEIF/BMP — not supported by Claude Vision
         with open(path, 'rb') as f:
             data = f.read()
-        ext = os.path.splitext(path)[1].lower()
-        media_type = ('image/jpeg' if ext in ('.jpg', '.jpeg')
-                      else 'image/png' if ext == '.png'
-                      else 'image/webp')
         b64 = base64.standard_b64encode(data).decode()
 
         response = _ai_client.messages.create(
