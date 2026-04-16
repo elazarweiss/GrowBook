@@ -13,13 +13,21 @@ class BabyMilestoneInfo {
 }
 
 const List<BabyMilestoneInfo> babyMilestones = [
-  BabyMilestoneInfo(slotKey: 'w-0',  label: 'Birth Day',     emoji: '🌟'),
-  BabyMilestoneInfo(slotKey: 'w-6',  label: 'First Smile',   emoji: '😊'),
-  BabyMilestoneInfo(slotKey: 'm-4',  label: 'Rolling Over',  emoji: '🔄'),
-  BabyMilestoneInfo(slotKey: 'm-6',  label: 'First Solids',  emoji: '🥄'),
-  BabyMilestoneInfo(slotKey: 'm-9',  label: 'First Crawl',   emoji: '🐣'),
-  BabyMilestoneInfo(slotKey: 'm-12', label: 'First Steps',   emoji: '👣'),
-  BabyMilestoneInfo(slotKey: 'm-18', label: 'First Words',   emoji: '💬'),
-  BabyMilestoneInfo(slotKey: 'y-2',  label: 'Second Year',   emoji: '🎂'),
-  BabyMilestoneInfo(slotKey: 'y-3',  label: 'Third Year',    emoji: '🎈'),
+  BabyMilestoneInfo(slotKey: 'w-0',  label: 'Birth Day',        emoji: '🌟'),
+  BabyMilestoneInfo(slotKey: 'w-4',  label: 'First Smile',      emoji: '😊'),
+  BabyMilestoneInfo(slotKey: 'w-8',  label: 'Holds Head Up',    emoji: '💪'),
+  BabyMilestoneInfo(slotKey: 'w-11', label: 'Tracks Objects',   emoji: '👀'),
+  BabyMilestoneInfo(slotKey: 'm-4',  label: 'Rolls Over',       emoji: '🔄'),
+  BabyMilestoneInfo(slotKey: 'm-6',  label: 'First Solids',     emoji: '🥄'),
+  BabyMilestoneInfo(slotKey: 'm-8',  label: 'Sits Alone',       emoji: '🪑'),
+  BabyMilestoneInfo(slotKey: 'm-9',  label: 'First Crawl',      emoji: '🐣'),
+  BabyMilestoneInfo(slotKey: 'm-12', label: 'First Steps',      emoji: '👣'),
+  BabyMilestoneInfo(slotKey: 'm-15', label: 'First Words',      emoji: '💬'),
+  BabyMilestoneInfo(slotKey: 'm-24', label: 'Second Birthday',  emoji: '🎂'),
+  BabyMilestoneInfo(slotKey: 'y-3',  label: 'Third Year',       emoji: '🎈'),
 ];
+
+/// O(1) lookup: slotKey → milestone info.
+final Map<String, BabyMilestoneInfo> kMilestonesBySlot = {
+  for (final m in babyMilestones) m.slotKey: m,
+};

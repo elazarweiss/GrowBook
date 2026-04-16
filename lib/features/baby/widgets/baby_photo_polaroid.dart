@@ -7,15 +7,38 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/models/baby_slot_model.dart';
 import '../../../data/baby_data.dart';
 
+/// Layout descriptor for a single photo position within a slot.
+class PolaroidLayout {
+  final double xOffset;   // horizontal shift from slot center (px)
+  final double yFactor;   // 0.0–1.0 how far into the half (1.0 = max)
+  final bool isAbove;     // true = above wire, false = below
+
+  const PolaroidLayout(this.xOffset, this.yFactor, this.isAbove);
+}
+
 class BabyPhotoPolaroid extends StatelessWidget {
   final BabySlot slot;
-  final String? photoPath;
+  final String? photoPath;       // null → placeholder / ghost
   final String? caption;
-  final int photoCount;
+  final int photoCount;          // total photos in this entry (for +N badge)
   final VoidCallback onTap;
   final double x;
   final double lineY;
   final double canvasH;
+
+  // Exhibition layout params
+  final int photoIndex;          // 0, 1, or 2
+  final double xOffset;          // px shift from slot center
+  final double yFactor;          // 0.0–1.0 depth into half
+  final bool? isAboveOverride;   // null = auto (odd index = above)
+  final double sizeFactor;       // 1.0 = normal, 0.82 = slightly smaller
+  final BabyMilestoneInfo? milestone; // non-null → ghost card shows emoji
+
+  static const List<PolaroidLayout> layouts = [
+    PolaroidLayout(-25.0, 0.85, true),   // photo 0: left, high above
+    PolaroidLayout( 30.0, 0.80, false),  // photo 1: right, far below
+    PolaroidLayout( 55.0, 0.60, true),   // photo 2: far right, mid-above
+  ];
 
   const BabyPhotoPolaroid({
     super.key,
@@ -27,29 +50,31 @@ class BabyPhotoPolaroid extends StatelessWidget {
     required this.x,
     required this.lineY,
     required this.canvasH,
+    this.photoIndex = 0,
+    this.xOffset = 0,
+    this.yFactor = 0.85,
+    this.isAboveOverride,
+    this.sizeFactor = 1.0,
+    this.milestone,
   });
 
-  /// Odd-indexed slots hang above the wire, even-indexed below.
-  bool get _isAbove => slot.index.isOdd;
+  bool get _isAbove => isAboveOverride ?? slot.index.isOdd;
 
-  /// Pseudo-random tilt ±2° seeded by slot index.
+  /// Consistent tilt seeded by slot index + photo index.
   double get _tiltRadians {
-    final seed = slot.index * 17 + 7;
+    final seed = slot.index * 17 + photoIndex * 7;
     return (math.sin(seed.toDouble()) * 2.0) * (math.pi / 180);
   }
 
   String get _displayCaption {
     if (caption?.isNotEmpty == true) return caption!;
+    if (milestone != null) return '${milestone!.emoji} ${milestone!.label}';
     return _slotLabel(slot);
   }
 
   static String _slotLabel(BabySlot slot) {
-    // Milestone name takes priority over generic week label
-    final milestone = babyMilestones
-        .where((m) => m.slotKey == slot.key)
-        .cast<BabyMilestoneInfo?>()
-        .firstOrNull;
-    if (milestone != null) return '${milestone.emoji} ${milestone.label}';
+    final m = kMilestonesBySlot[slot.key];
+    if (m != null) return '${m.emoji} ${m.label}';
     switch (slot.kind) {
       case BabyAgeKind.week:
         return 'Week ${slot.value}';
@@ -62,18 +87,19 @@ class BabyPhotoPolaroid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Card fills ~70% of its half-canvas, capped so multiple rows can coexist
     const double stemH = 16;
     const double captionH = 20;
-    final double halfH = _isAbove ? lineY : (canvasH - lineY);
-    final double cardH =
-        (halfH * 0.70 - stemH - captionH).clamp(55.0, 200.0);
-    final double cardW = (cardH * 0.82).clamp(55.0, 160.0);
 
+    final double halfH = _isAbove ? lineY : (canvasH - lineY);
+    final double maxCardH = halfH * yFactor - stemH - captionH;
+    final double cardH = (maxCardH * sizeFactor).clamp(50.0, 190.0);
+    final double cardW = (cardH * 0.82 * sizeFactor).clamp(45.0, 155.0);
+
+    final double centerX = x + xOffset;
     final double top = _isAbove
         ? lineY - stemH - cardH - captionH
         : lineY + stemH;
-    final double left = x - cardW / 2;
+    final double left = centerX - cardW / 2;
 
     return Positioned(
       left: left,
@@ -86,11 +112,11 @@ class BabyPhotoPolaroid extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (_isAbove) ...[
-                _buildCard(cardW, cardH, captionH),
+                _buildCard(context, cardW, cardH, captionH),
                 _buildStem(stemH),
               ] else ...[
                 _buildStem(stemH),
-                _buildCard(cardW, cardH, captionH),
+                _buildCard(context, cardW, cardH, captionH),
               ],
             ],
           ),
@@ -105,19 +131,30 @@ class BabyPhotoPolaroid extends StatelessWidget {
         color: AppColors.divider,
       );
 
-  Widget _buildCard(double cardW, double cardH, double captionH) {
+  Widget _buildCard(BuildContext context, double cardW, double cardH, double captionH) {
+    final isGhost = photoPath == null && milestone != null;
+
     return Container(
       width: cardW,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isGhost ? AppColors.background : Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.10),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: isGhost
+            ? Border.all(
+                color: AppColors.sageGreen.withOpacity(0.45),
+                width: 1.5,
+                strokeAlign: BorderSide.strokeAlignOutside,
+              )
+            : null,
+        boxShadow: isGhost
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.10),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -131,29 +168,31 @@ class BabyPhotoPolaroid extends StatelessWidget {
                   child: SizedBox(
                     width: cardW - 10,
                     height: cardH,
-                    child: photoPath != null
-                        ? _buildImage(cardW, cardH)
-                        : _placeholder(cardW, cardH),
+                    child: isGhost
+                        ? _ghostContent(cardW, cardH)
+                        : (photoPath != null
+                            ? _buildImage(cardW, cardH)
+                            : _placeholder(cardW, cardH)),
                   ),
                 ),
-                // Multi-photo count badge
-                if (photoCount > 1)
+                // "+N" badge when there are more than 3 photos and this is the 3rd
+                if (photoIndex == 2 && photoCount > 3)
                   Positioned(
                     top: 4,
                     right: 4,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                       decoration: BoxDecoration(
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        '$photoCount',
+                        '+${photoCount - 3}',
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.w700),
+                          color: Colors.white,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
@@ -168,7 +207,9 @@ class BabyPhotoPolaroid extends StatelessWidget {
                 style: GoogleFonts.inter(
                   fontSize: 9,
                   fontStyle: FontStyle.italic,
-                  color: AppColors.warmTaupe,
+                  color: isGhost
+                      ? AppColors.sageGreen.withOpacity(0.7)
+                      : AppColors.warmTaupe,
                 ),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
@@ -176,6 +217,18 @@ class BabyPhotoPolaroid extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _ghostContent(double w, double h) {
+    return Container(
+      color: AppColors.sageGreen.withOpacity(0.06),
+      child: Center(
+        child: Text(
+          milestone?.emoji ?? '📸',
+          style: TextStyle(fontSize: (h * 0.35).clamp(18.0, 42.0)),
+        ),
       ),
     );
   }
@@ -198,9 +251,11 @@ class BabyPhotoPolaroid extends StatelessWidget {
         errorBuilder: (_, __, ___) => _placeholder(cardW, cardH),
       );
     }
-    return Image.file(File(path),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _placeholder(cardW, cardH));
+    return Image.file(
+      File(path),
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _placeholder(cardW, cardH),
+    );
   }
 
   Widget _placeholder(double w, double h) {

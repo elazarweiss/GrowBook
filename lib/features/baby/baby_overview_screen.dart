@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,6 +11,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/baby_timeline_utils.dart';
 import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
+import 'baby_scan_controller.dart';
 import 'widgets/baby_clothesline_painter.dart';
 import 'widgets/baby_photo_polaroid.dart';
 
@@ -24,11 +26,45 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (BabyRepository.instance.getJourney() == null && mounted) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (BabyRepository.instance.getJourney() == null) {
         context.go('/baby/setup');
+        return;
+      }
+      // Background auto-scan: silently pick up new photos if server is running
+      if (kIsWeb) {
+        final folder = BabyRepository.instance.cameraFolderPath;
+        if (folder != null) {
+          final running = await BabyScanController.checkServerRunning();
+          if (running) _autoScanBackground();
+        }
       }
     });
+  }
+
+  Future<void> _autoScanBackground() async {
+    try {
+      final journey = BabyRepository.instance.getJourney();
+      if (journey == null) return;
+      final lastScan = BabyRepository.instance.lastScanAt;
+      final proposals = await BabyScanController.scan(
+        folderPath: BabyRepository.instance.cameraFolderPath ?? '',
+        birthDate: journey.birthDate,
+        sinceDate: lastScan,
+      );
+      if (proposals.isEmpty) return;
+      // Auto-select all candidates
+      for (final p in proposals) {
+        for (final c in p.candidates) {
+          c.selected = true;
+        }
+      }
+      await BabyScanController.saveSelected(proposals);
+      BabyScanController.screenInbox();
+    } catch (_) {
+      // Best-effort — never surface errors to user
+    }
   }
 
   @override
@@ -123,7 +159,7 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
               ],
             ),
           ),
-          // Auto-scan button (folder → smart import)
+          // Auto-scan button
           Tooltip(
             message: hasFolderConfigured
                 ? 'Scan camera folder for new photos'
@@ -221,6 +257,7 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
         _slots = BabyTimelineUtils.generateSlots(widget.journey.birthDate);
         final currentSlot = widget.journey.currentSlot;
         final totalW = BabyTimelineUtils.totalWidth(_slots);
+        final milestoneKeys = kMilestonesBySlot.keys.toSet();
 
         return LayoutBuilder(builder: (context, constraints) {
           final double canvasH = constraints.maxHeight;
@@ -255,59 +292,15 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
                       slots: _slots,
                       currentSlot: currentSlot,
                       lineY: lineY,
+                      milestoneKeys: milestoneKeys,
                     ),
                   ),
-
-                  // ── Milestone labels ABOVE the wire ───────────────────────
-                  ..._slots.map((slot) {
-                    final x = BabyTimelineUtils.xForSlot(slot, _slots);
-                    final label = _milestoneLabel(slot);
-                    if (label == null) return const SizedBox.shrink();
-                    final isSpecial =
-                        slot.value == 0 || slot.kind != BabyAgeKind.week;
-                    return Positioned(
-                      left: x - 30,
-                      top: lineY - (isSpecial ? 30 : 24),
-                      child: SizedBox(
-                        width: 60,
-                        child: Text(
-                          label,
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.inter(
-                            fontSize: isSpecial ? 10 : 9,
-                            fontWeight: isSpecial
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                            color: isSpecial
-                                ? AppColors.warmBrown
-                                : AppColors.warmTaupe,
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
 
                   // ── Phase section labels (higher, colored) ─────────────────
                   ..._phaseLabels(_slots, lineY),
 
-                  // ── Photo polaroids ───────────────────────────────────────
-                  ..._slots.map((slot) {
-                    final entry = box.get(slot.key);
-                    final x = BabyTimelineUtils.xForSlot(slot, _slots);
-                    return BabyPhotoPolaroid(
-                      key: ValueKey(slot.key),
-                      slot: slot,
-                      photoPath: entry?.photoPaths.isNotEmpty == true
-                          ? entry!.photoPaths.first
-                          : null,
-                      caption: entry?.caption,
-                      photoCount: entry?.photoPaths.length ?? 0,
-                      x: x,
-                      lineY: lineY,
-                      canvasH: canvasH,
-                      onTap: () => context.push('/baby/slot/${slot.key}'),
-                    );
-                  }),
+                  // ── Photo polaroids (multi per slot) ──────────────────────
+                  ..._buildPolaroids(context, box, canvasH, lineY),
                 ],
               ),
             ),
@@ -317,29 +310,67 @@ class _BabyClotheslineTimelineState extends State<_BabyClotheslineTimeline> {
     );
   }
 
-  /// Returns the label to show above the wire tick.
-  /// Named milestones always show; other slots only show at major intervals.
-  static String? _milestoneLabel(BabySlot slot) {
-    // Named milestone takes priority
-    final m = babyMilestones
-        .where((m) => m.slotKey == slot.key)
-        .cast<BabyMilestoneInfo?>()
-        .firstOrNull;
-    if (m != null) return '${m.emoji} ${m.label}';
+  List<Widget> _buildPolaroids(
+    BuildContext context,
+    Box<BabyEntry> box,
+    double canvasH,
+    double lineY,
+  ) {
+    final widgets = <Widget>[];
 
-    // Fall back to time labels for major slots
-    switch (slot.kind) {
-      case BabyAgeKind.week:
-        if (slot.value % 4 == 0) return '${slot.value} wk';
-        return null;
-      case BabyAgeKind.month:
-        if (slot.value % 3 != 0) return null;
-        if (slot.value == 12) return '1 year';
-        if (slot.value == 24) return '2 years';
-        return '${slot.value} mo';
-      case BabyAgeKind.year:
-        return '${slot.value} yr';
+    for (final slot in _slots) {
+      final entry = box.get(slot.key);
+      final milestone = kMilestonesBySlot[slot.key];
+      final x = BabyTimelineUtils.xForSlot(slot, _slots);
+
+      final hasPhotos = entry != null && entry.photoPaths.isNotEmpty;
+
+      if (!hasPhotos) {
+        // Ghost card for milestone slots only
+        if (milestone != null) {
+          widgets.add(BabyPhotoPolaroid(
+            key: ValueKey('ghost-${slot.key}'),
+            slot: slot,
+            photoPath: null,
+            caption: null,
+            photoCount: 0,
+            onTap: () => context.push('/baby/slot/${slot.key}'),
+            x: x,
+            lineY: lineY,
+            canvasH: canvasH,
+            photoIndex: 0,
+            xOffset: 0,
+            yFactor: 0.70,
+            milestone: milestone,
+          ));
+        }
+        continue;
+      }
+
+      final count = entry.photoPaths.length.clamp(1, 3);
+      for (int i = 0; i < count; i++) {
+        final layout = BabyPhotoPolaroid.layouts[i];
+        widgets.add(BabyPhotoPolaroid(
+          key: ValueKey('${slot.key}-$i'),
+          slot: slot,
+          photoPath: entry.photoPaths[i],
+          caption: i == 0 ? entry.caption : null,
+          photoCount: entry.photoPaths.length,
+          onTap: () => context.push('/baby/slot/${slot.key}'),
+          x: x,
+          lineY: lineY,
+          canvasH: canvasH,
+          photoIndex: i,
+          xOffset: layout.xOffset,
+          yFactor: layout.yFactor,
+          isAboveOverride: layout.isAbove,
+          sizeFactor: i == 2 ? 0.82 : 1.0,
+          milestone: i == 0 ? milestone : null,
+        ));
+      }
     }
+
+    return widgets;
   }
 
   static List<Widget> _phaseLabels(List<BabySlot> slots, double lineY) {
