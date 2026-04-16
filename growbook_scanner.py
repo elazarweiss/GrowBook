@@ -195,57 +195,114 @@ def _prepare_image(path):
     return None, None
 
 
-_ANALYZE_PROMPT = """Analyze this photo. Return ONLY valid JSON, nothing else:
+_SCREEN_PROMPT = 'Does this photo contain a baby, infant, or toddler? Reply with ONLY: {"has_baby": true} or {"has_baby": false}'
+
+_TAG_PROMPT = """This photo contains a baby. Return ONLY valid JSON:
 {
-  "has_baby": true,
   "people": [],
   "mood": "",
   "activity": "",
   "is_milestone": false,
   "caption": ""
 }
-
 Rules:
-- "has_baby": true if a baby, infant, or toddler is clearly visible; false for photos of objects, receipts, landscapes, adults only, etc.
 - "people": array of any that apply: "baby_solo", "with_mom", "with_dad", "with_siblings", "with_grandparents", "family_group"
 - "mood": exactly one of: "happy", "calm", "sleeping", "crying", "silly", "surprised"
 - "activity": exactly one of: "bath", "feeding", "play", "outdoors", "tummy_time", "reading", "travel", "milestone", "other"
 - "is_milestone": true only for clear developmental firsts (first smile, crawl, steps, words, etc.)
-- "caption": one warm, concise English sentence under 60 characters describing the moment (only if has_baby is true, else empty)"""
+- "caption": one warm, concise English sentence under 60 characters"""
 
-def analyze_photo(path):
-    """Analyze a single photo with Claude Vision. Returns tag dict or None."""
-    if not AI_AVAILABLE or _ai_client is None:
-        return None
+def _call_claude(b64, media_type, prompt, max_tokens):
+    """Single Claude Vision call. Returns parsed JSON dict or None."""
     try:
-        ext = os.path.splitext(path)[1].lower()
-        if ext not in _SUPPORTED_MEDIA and ext not in ('.heic', '.heif'):
-            return None
-        data, media_type = _prepare_image(path)
-        if data is None:
-            return None
-        b64 = base64.standard_b64encode(data).decode()
-
         response = _ai_client.messages.create(
             model='claude-haiku-4-5-20251001',
-            max_tokens=300,
+            max_tokens=max_tokens,
             messages=[{
                 'role': 'user',
                 'content': [
                     {'type': 'image',
                      'source': {'type': 'base64', 'media_type': media_type, 'data': b64}},
-                    {'type': 'text', 'text': _ANALYZE_PROMPT},
+                    {'type': 'text', 'text': prompt},
                 ]
             }]
         )
         text = response.content[0].text.strip()
-        start = text.find('{')
-        end = text.rfind('}') + 1
+        start, end = text.find('{'), text.rfind('}') + 1
         if start != -1 and end > start:
             return json.loads(text[start:end])
-    except Exception as e:
-        print(f'  ⚠ Analysis failed for {os.path.basename(path)}: {e}')
+    except Exception:
+        pass
     return None
+
+def _prepare_b64(path):
+    """Returns (b64, media_type) or (None, None) if unsupported/failed."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in _SUPPORTED_MEDIA and ext not in ('.heic', '.heif'):
+        return None, None
+    data, media_type = _prepare_image(path)
+    if data is None:
+        return None, None
+    return base64.standard_b64encode(data).decode(), media_type
+
+def screen_photo(path):
+    """Pass 1: quick has_baby check. Returns (path, True/False) or (path, None) on error."""
+    b64, media_type = _prepare_b64(path)
+    if b64 is None:
+        return path, None
+    result = _call_claude(b64, media_type, _SCREEN_PROMPT, max_tokens=20)
+    has_baby = result.get('has_baby', False) if result else False
+    return path, has_baby
+
+def tag_photo(path):
+    """Pass 2: full tagging for confirmed baby photos. Returns tag dict or None."""
+    b64, media_type = _prepare_b64(path)
+    if b64 is None:
+        return path, None
+    result = _call_claude(b64, media_type, _TAG_PROMPT, max_tokens=250)
+    return path, result
+
+def analyze_photos_two_pass(valid_paths):
+    """
+    Two-pass analysis:
+    1. Quick has_baby screen for all photos (8 workers, tiny response)
+    2. Full tagging only for baby photos (4 workers)
+    Returns dict: path → {has_baby, people, mood, activity, is_milestone, caption}
+    """
+    tags = {}
+    total = len(valid_paths)
+
+    # Pass 1: screen all photos
+    print(f'  Pass 1: screening {total} photos for baby…')
+    baby_paths = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(screen_photo, p): p for p in valid_paths}
+        for future in futures:
+            path, has_baby = future.result()
+            if has_baby is None:
+                continue  # unsupported format
+            tags[path] = {'has_baby': has_baby}
+            if has_baby:
+                baby_paths.append(path)
+
+    print(f'  Pass 1 done: {len(baby_paths)}/{total} are baby photos')
+
+    if not baby_paths:
+        return tags
+
+    # Pass 2: full tag only baby photos
+    print(f'  Pass 2: tagging {len(baby_paths)} baby photos…')
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(tag_photo, p): p for p in baby_paths}
+        for future in futures:
+            path, result = future.result()
+            if result:
+                tags[path].update(result)
+                print(f'  ✓ {os.path.basename(path)}: {result.get("activity","?")} / {result.get("mood","?")}')
+            else:
+                print(f'  ⚠ Tagging failed for {os.path.basename(path)}')
+
+    return tags
 
 # ── HTTP server ────────────────────────────────────────────────────────────────
 
@@ -296,16 +353,7 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.isfile(p) and os.path.abspath(p).startswith(scan_abs)
             ]
 
-            print(f'  Analyzing {len(valid_paths)} photos with Claude Vision…')
-
-            tags = {}
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {executor.submit(analyze_photo, p): p for p in valid_paths}
-                for future, p in futures.items():
-                    result = future.result()
-                    if result:
-                        tags[p] = result
-                        print(f'  ✓ {os.path.basename(p)}: {result.get("activity", "?")} / {result.get("mood", "?")}')
+            tags = analyze_photos_two_pass(valid_paths)
 
             response_body = json.dumps({'tags': tags}).encode()
             self.send_response(200)
