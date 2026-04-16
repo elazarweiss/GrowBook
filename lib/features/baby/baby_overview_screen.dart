@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +12,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/baby_timeline_utils.dart';
 import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
+import 'baby_scan_controller.dart';
 import 'widgets/baby_clothesline_painter.dart';
 import 'widgets/baby_photo_polaroid.dart';
 
@@ -28,7 +30,10 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (BabyRepository.instance.getJourney() == null && mounted) {
         context.go('/baby/setup');
+        return;
       }
+      // Warm up scan cache in background so first slot tap is instant
+      if (kIsWeb) BabyScanController.warmupCache();
     });
   }
 

@@ -27,6 +27,54 @@ class BabyScanController {
     '.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.bmp',
   };
 
+  // ── Scan cache (5-minute TTL, avoids re-walking disk on every slot open) ──
+  static Map<String, List<InboxPhoto>>? _scanCache;
+  static DateTime? _scanCacheTime;
+  static const _cacheTtl = Duration(minutes: 5);
+
+  static bool get _cacheValid =>
+      _scanCache != null &&
+      _scanCacheTime != null &&
+      DateTime.now().difference(_scanCacheTime!) < _cacheTtl;
+
+  static void invalidateCache() {
+    _scanCache = null;
+    _scanCacheTime = null;
+  }
+
+  /// Warm up the scan cache in the background — call once on app start.
+  static Future<void> warmupCache() async {
+    if (_cacheValid) return;
+    try {
+      await _fetchAndCacheScan();
+    } catch (_) {}
+  }
+
+  static Future<Map<String, List<InboxPhoto>>> _fetchAndCacheScan() async {
+    final response = await http
+        .get(Uri.parse('$_serverBase/scan'))
+        .timeout(const Duration(seconds: 60));
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final groups = json['groups'] as Map<String, dynamic>? ?? {};
+
+    final cache = <String, List<InboxPhoto>>{};
+    for (final entry in groups.entries) {
+      final slotKey = entry.key;
+      final photos = entry.value as List<dynamic>;
+      cache[slotKey] = photos.map((p) {
+        final serverPath = p['path'] as String;
+        final date =
+            DateTime.tryParse(p['date'] as String? ?? '') ?? DateTime.now();
+        final id = 'server:$serverPath';
+        return InboxPhoto(id: id, path: id, date: date, slotKey: slotKey);
+      }).toList();
+    }
+
+    _scanCache = cache;
+    _scanCacheTime = DateTime.now();
+    return cache;
+  }
+
   // ── Check if companion server is running (web only) ───────────────────────
 
   static Future<bool> checkServerRunning() async {
@@ -197,31 +245,16 @@ class BabyScanController {
     }
 
     await BabyRepository.instance.saveLastScanAt(DateTime.now());
+    invalidateCache(); // force fresh scan next time a slot opens
   }
 
   // ── Fetch photos for a single slot from server ───────────────────────────
 
-  /// Calls /scan and returns photos for the given slot as pre-built InboxPhotos.
+  /// Returns photos for the given slot — uses cache, scans only if needed.
   static Future<List<InboxPhoto>> fetchPhotosForSlot(BabySlot slot) async {
     try {
-      final response = await http
-          .get(Uri.parse('$_serverBase/scan'))
-          .timeout(const Duration(seconds: 30));
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final groups = json['groups'] as Map<String, dynamic>? ?? {};
-      final photos = groups[slot.key] as List<dynamic>? ?? [];
-      return photos.map((p) {
-        final serverPath = p['path'] as String;
-        final date =
-            DateTime.tryParse(p['date'] as String? ?? '') ?? DateTime.now();
-        final id = 'server:$serverPath';
-        return InboxPhoto(
-          id: id,
-          path: id,
-          date: date,
-          slotKey: slot.key,
-        );
-      }).toList();
+      final cache = _cacheValid ? _scanCache! : await _fetchAndCacheScan();
+      return cache[slot.key] ?? [];
     } catch (_) {
       return [];
     }
