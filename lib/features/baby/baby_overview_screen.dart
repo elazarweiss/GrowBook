@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -12,7 +11,6 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/baby_timeline_utils.dart';
 import '../../data/baby_data.dart';
 import '../../data/baby_repository.dart';
-import 'baby_scan_controller.dart';
 import 'widgets/baby_clothesline_painter.dart';
 import 'widgets/baby_photo_polaroid.dart';
 
@@ -27,45 +25,11 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      if (BabyRepository.instance.getJourney() == null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (BabyRepository.instance.getJourney() == null && mounted) {
         context.go('/baby/setup');
-        return;
-      }
-      // Background auto-scan: silently pick up new photos if server is running
-      if (kIsWeb) {
-        final folder = BabyRepository.instance.cameraFolderPath;
-        if (folder != null) {
-          final running = await BabyScanController.checkServerRunning();
-          if (running) _autoScanBackground();
-        }
       }
     });
-  }
-
-  Future<void> _autoScanBackground() async {
-    try {
-      final journey = BabyRepository.instance.getJourney();
-      if (journey == null) return;
-      final lastScan = BabyRepository.instance.lastScanAt;
-      final proposals = await BabyScanController.scan(
-        folderPath: BabyRepository.instance.cameraFolderPath ?? '',
-        birthDate: journey.birthDate,
-        sinceDate: lastScan,
-      );
-      if (proposals.isEmpty) return;
-      // Auto-select all candidates
-      for (final p in proposals) {
-        for (final c in p.candidates) {
-          c.selected = true;
-        }
-      }
-      await BabyScanController.saveSelected(proposals);
-      BabyScanController.screenInbox();
-    } catch (_) {
-      // Best-effort — never surface errors to user
-    }
   }
 
   @override
