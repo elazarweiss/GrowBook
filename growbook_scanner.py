@@ -7,11 +7,12 @@ sparkle button (✨). Keep this window open while using GrowBook.
 
 Usage:  python growbook_scanner.py
 """
-import os, re, json, struct, base64
+import os, re, json, struct, base64, io
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
+from PIL import Image
 
 # ── Load .env if present ───────────────────────────────────────────────────────
 _env_path = os.path.join(os.path.dirname(__file__), '.env')
@@ -171,6 +172,28 @@ _SUPPORTED_MEDIA = {
     '.webp': 'image/webp',
 }
 
+_MAX_PX    = 1568            # Claude recommended max dimension
+_MAX_BYTES = 4 * 1024 * 1024  # 4 MB safety margin (API limit is 5 MB)
+
+def _prepare_image(path):
+    """Return (jpeg_bytes, 'image/jpeg') resized to fit Claude's limits."""
+    try:
+        with Image.open(path) as img:
+            img = img.convert('RGB')
+            w, h = img.size
+            if max(w, h) > _MAX_PX:
+                scale = _MAX_PX / max(w, h)
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            for quality in (85, 70, 55, 40):
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=quality)
+                data = buf.getvalue()
+                if len(data) <= _MAX_BYTES:
+                    return data, 'image/jpeg'
+    except Exception:
+        pass
+    return None, None
+
 
 _ANALYZE_PROMPT = """Analyze this baby photo. Return ONLY valid JSON, nothing else:
 {
@@ -194,11 +217,11 @@ def analyze_photo(path):
         return None
     try:
         ext = os.path.splitext(path)[1].lower()
-        media_type = _SUPPORTED_MEDIA.get(ext)
-        if media_type is None:
-            return None  # skip HEIC/HEIF/BMP — not supported by Claude Vision
-        with open(path, 'rb') as f:
-            data = f.read()
+        if ext not in _SUPPORTED_MEDIA and ext not in ('.heic', '.heif'):
+            return None
+        data, media_type = _prepare_image(path)
+        if data is None:
+            return None
         b64 = base64.standard_b64encode(data).decode()
 
         response = _ai_client.messages.create(
