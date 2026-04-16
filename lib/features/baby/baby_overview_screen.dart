@@ -47,7 +47,10 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
         children: [
           SafeArea(
             bottom: false,
-            child: _buildHeader(journey),
+            child: ValueListenableBuilder(
+              valueListenable: BabyRepository.instance.inboxListenable,
+              builder: (context, _, __) => _buildHeader(journey),
+            ),
           ),
           Expanded(child: _BabyClotheslineTimeline(journey: journey)),
         ],
@@ -59,6 +62,7 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
     final ageLabel = _ageDescription(journey);
     final hasFolderConfigured =
         BabyRepository.instance.cameraFolderPath != null;
+    final inboxCount = BabyRepository.instance.inboxBabyCount;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 4, 6),
@@ -82,6 +86,40 @@ class _BabyOverviewScreenState extends State<BabyOverviewScreen> {
                 Text(ageLabel,
                     style: GoogleFonts.inter(
                         fontSize: 13, color: AppColors.warmTaupe)),
+              ],
+            ),
+          ),
+          // Inbox button with badge
+          Tooltip(
+            message: 'Review inbox photos',
+            child: Stack(
+              alignment: Alignment.topRight,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.inbox_outlined),
+                  color: inboxCount > 0 ? AppColors.warmBrown : AppColors.warmTaupe,
+                  onPressed: () => context.push('/baby/inbox'),
+                ),
+                if (inboxCount > 0)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        inboxCount > 99 ? '99+' : '$inboxCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

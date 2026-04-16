@@ -195,8 +195,9 @@ def _prepare_image(path):
     return None, None
 
 
-_ANALYZE_PROMPT = """Analyze this baby photo. Return ONLY valid JSON, nothing else:
+_ANALYZE_PROMPT = """Analyze this photo. Return ONLY valid JSON, nothing else:
 {
+  "has_baby": true,
   "people": [],
   "mood": "",
   "activity": "",
@@ -205,11 +206,12 @@ _ANALYZE_PROMPT = """Analyze this baby photo. Return ONLY valid JSON, nothing el
 }
 
 Rules:
+- "has_baby": true if a baby, infant, or toddler is clearly visible; false for photos of objects, receipts, landscapes, adults only, etc.
 - "people": array of any that apply: "baby_solo", "with_mom", "with_dad", "with_siblings", "with_grandparents", "family_group"
 - "mood": exactly one of: "happy", "calm", "sleeping", "crying", "silly", "surprised"
 - "activity": exactly one of: "bath", "feeding", "play", "outdoors", "tummy_time", "reading", "travel", "milestone", "other"
 - "is_milestone": true only for clear developmental firsts (first smile, crawl, steps, words, etc.)
-- "caption": one warm, concise English sentence under 60 characters describing the moment"""
+- "caption": one warm, concise English sentence under 60 characters describing the moment (only if has_baby is true, else empty)"""
 
 def analyze_photo(path):
     """Analyze a single photo with Claude Vision. Returns tag dict or None."""

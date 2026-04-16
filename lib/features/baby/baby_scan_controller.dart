@@ -4,8 +4,7 @@ import 'package:exif/exif.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
-import '../../core/models/baby_entry_model.dart';
-import '../../core/models/photo_tag_model.dart';
+import '../../core/models/inbox_photo_model.dart';
 import '../../core/models/scan_proposal_model.dart';
 import '../../core/utils/baby_timeline_utils.dart';
 import '../../data/baby_repository.dart';
@@ -174,7 +173,7 @@ class BabyScanController {
       ..sort((a, b) => a.slot.index.compareTo(b.slot.index));
   }
 
-  // ── Save selected candidates ──────────────────────────────────────────────
+  // ── Save selected candidates to inbox ────────────────────────────────────
 
   static Future<void> saveSelected(List<ScanProposal> proposals) async {
     for (final proposal in proposals) {
@@ -182,54 +181,46 @@ class BabyScanController {
       final selected = proposal.candidates.where((c) => c.selected).toList();
       if (selected.isEmpty) continue;
 
-      List<String> newPaths;
-
-      if (kIsWeb) {
-        // Store server: prefix — instant, no HTTP fetch required
-        newPaths = selected.map((c) => 'server:${c.serverPath}').toList();
-      } else {
-        newPaths = selected.map((c) => c.serverPath).toList();
+      for (final candidate in selected) {
+        final storedPath = kIsWeb
+            ? 'server:${candidate.serverPath}'
+            : candidate.serverPath;
+        final photo = InboxPhoto(
+          id: storedPath,
+          path: storedPath,
+          date: candidate.photoDate,
+          slotKey: proposal.slot.key,
+        );
+        await BabyRepository.instance.saveInboxPhoto(photo);
       }
-
-      if (newPaths.isEmpty) continue;
-
-      final existing = BabyRepository.instance.getEntry(proposal.slot.key);
-      await BabyRepository.instance.saveEntry(BabyEntry(
-        slotKey: proposal.slot.key,
-        photoPaths: [...?existing?.photoPaths, ...newPaths],
-        caption: existing?.caption,
-        updatedAt: DateTime.now(),
-      ));
     }
 
     await BabyRepository.instance.saveLastScanAt(DateTime.now());
   }
 
-  // ── Background AI analysis ────────────────────────────────────────────────
+  // ── Background AI screening ───────────────────────────────────────────────
 
   /// Call after saveSelected() — fire and forget.
-  /// Posts photo paths to the companion server's /analyze endpoint,
-  /// receives Claude Vision tags, and stores them in the photoTags Hive box.
-  static Future<void> analyzeImported(List<ScanProposal> proposals) async {
-    // Collect server paths for each slot
-    final Map<String, List<String>> slotServerPaths = {};
-    for (final proposal in proposals) {
-      if (!proposal.importEnabled) continue;
-      final selected = proposal.candidates.where((c) => c.selected).toList();
-      if (selected.isEmpty) continue;
-      slotServerPaths[proposal.slot.key] =
-          selected.map((c) => c.serverPath).toList();
+  /// Posts unscreened inbox photo paths to /analyze, then updates each
+  /// InboxPhoto with has_baby flag and tags.
+  static Future<void> screenInbox() async {
+    final unscreened = BabyRepository.instance.getUnscreenedInbox();
+    if (unscreened.isEmpty) return;
+
+    // Map server path (stripped) → InboxPhoto for matching results
+    final Map<String, InboxPhoto> pathToPhoto = {};
+    for (final photo in unscreened) {
+      final serverPath = photo.path.startsWith('server:')
+          ? photo.path.substring(7)
+          : photo.path;
+      pathToPhoto[serverPath] = photo;
     }
-    if (slotServerPaths.isEmpty) return;
 
     try {
-      final allPaths =
-          slotServerPaths.values.expand((p) => p).toList();
-
       final response = await http.post(
         Uri.parse('$_serverBase/analyze'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'paths': allPaths}),
+        body: jsonEncode({'paths': pathToPhoto.keys.toList()}),
       ).timeout(const Duration(minutes: 10));
 
       if (response.statusCode != 200) return;
@@ -237,37 +228,25 @@ class BabyScanController {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final tagMap = json['tags'] as Map<String, dynamic>? ?? {};
 
-      // Match tags to the now-saved photoPaths in each slot
-      for (final entry in slotServerPaths.entries) {
-        final slotKey = entry.key;
-        final existing = BabyRepository.instance.getEntry(slotKey);
-        if (existing == null) continue;
+      for (final entry in pathToPhoto.entries) {
+        final serverPath = entry.key;
+        final photo = entry.value;
+        final tagData = tagMap[serverPath] as Map<String, dynamic>?;
 
-        for (int i = 0; i < existing.photoPaths.length; i++) {
-          final storedPath = existing.photoPaths[i];
-          // Resolve the server path used as key in tagMap
-          final serverPath = storedPath.startsWith('server:')
-              ? storedPath.substring(7)
-              : storedPath;
-
-          final tagData = tagMap[serverPath] as Map<String, dynamic>?;
-          if (tagData == null) continue;
-
-          final tag = PhotoTag(
-            photoPath: storedPath,
-            people: List<String>.from(tagData['people'] as List? ?? []),
-            mood: (tagData['mood'] as String?)?.toLowerCase() ?? 'calm',
-            activity:
-                (tagData['activity'] as String?)?.toLowerCase() ?? 'other',
-            isMilestone: tagData['is_milestone'] as bool? ?? false,
-            aiCaption: tagData['caption'] as String?,
-          );
-
-          await BabyRepository.instance.savePhotoTag(slotKey, i, tag);
-        }
+        final screened = photo.copyWithScreening(
+          hasBaby: tagData != null
+              ? (tagData['has_baby'] as bool? ?? false)
+              : false,
+          isMilestone: tagData?['is_milestone'] as bool? ?? false,
+          mood: (tagData?['mood'] as String?)?.toLowerCase(),
+          activity: (tagData?['activity'] as String?)?.toLowerCase(),
+          aiCaption: tagData?['caption'] as String?,
+          people: List<String>.from(tagData?['people'] as List? ?? []),
+        );
+        await BabyRepository.instance.saveInboxPhoto(screened);
       }
     } catch (_) {
-      // Analysis is best-effort; silently ignore failures
+      // Screening is best-effort; silently ignore failures
     }
   }
 
