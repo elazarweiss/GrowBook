@@ -78,10 +78,11 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   }
 
   Future<void> _tagPhotos() async {
-    final hasUnscreened = BabyRepository.instance
-        .getUnscreenedInbox()
-        .any((p) => p.slotKey == widget.slot.key);
-    if (!hasUnscreened) return;
+    // Run full tagging only for baby photos that don't yet have mood/activity tags
+    final hasUntagged = BabyRepository.instance
+        .getInboxForSlot(widget.slot.key)
+        .any((p) => p.hasBaby == true && p.mood == null);
+    if (!hasUntagged) return;
 
     if (mounted) setState(() => _tagging = true);
     await BabyScanController.screenInboxSlot(widget.slot.key);

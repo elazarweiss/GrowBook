@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-GrowBook Scanner — companion server for automatic photo import.
+GrowBook Scanner -- companion server for automatic photo import.
 
 Run this script once, then open GrowBook in Chrome and click the
-sparkle button (✨). Keep this window open while using GrowBook.
+sparkle button (sparkle). Keep this window open while using GrowBook.
 
 Usage:  python growbook_scanner.py
+
+Endpoints:
+  GET  /status   -- health check
+  GET  /scan     -- scan folder, return photos grouped by slot (date only, no AI)
+  GET  /photo    -- serve a photo file by path
+  POST /screen   -- pass 1: quick has_baby check for a list of paths
+  POST /analyze  -- pass 2: full tags (mood/activity/milestone/caption) for baby photos
 """
 import os, re, json, struct, base64, io
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -14,7 +21,7 @@ from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 
-# ── Load .env if present ───────────────────────────────────────────────────────
+# -- Load .env if present -------------------------------------------------------
 _env_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.isfile(_env_path):
     with open(_env_path) as _f:
@@ -24,7 +31,7 @@ if os.path.isfile(_env_path):
                 _k, _, _v = _line.partition('=')
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-# ── AI analysis setup ──────────────────────────────────────────────────────────
+# -- AI analysis setup ----------------------------------------------------------
 try:
     import anthropic as _anthropic
     _ai_client = _anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY', ''))
@@ -33,13 +40,13 @@ except ImportError:
     _ai_client = None
     AI_AVAILABLE = False
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# -- Configuration --------------------------------------------------------------
 SCAN_FOLDER = r"C:\Users\elazar\Dropbox\Camera Uploads"
 BIRTH_DATE  = datetime(2026, 3, 28)
 PORT        = 7272
 IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.bmp'}
 
-# ── Date extraction ────────────────────────────────────────────────────────────
+# -- Date extraction ------------------------------------------------------------
 
 def parse_date_from_filename(name):
     # Dropbox pattern: "2026-04-13 12.34.56.jpg"
@@ -113,13 +120,13 @@ def get_photo_date(path):
     except Exception:
         return None
 
-# ── Slot mapping ───────────────────────────────────────────────────────────────
+# -- Slot mapping ---------------------------------------------------------------
 
 def date_to_slot_key(dt):
     days = (dt - BIRTH_DATE).days
     if days < 0:
         return None          # before birth
-    if days < 84:            # weeks 0–11
+    if days < 84:            # weeks 0-11
         return f"w-{min(days // 7, 11)}"
     months = int(days / 30.44)
     if months <= 24:
@@ -127,7 +134,7 @@ def date_to_slot_key(dt):
     years = days // 365
     return f"y-{years}"
 
-# ── Folder scan ────────────────────────────────────────────────────────────────
+# -- Folder scan ----------------------------------------------------------------
 
 def scan_folder():
     groups = {}
@@ -163,7 +170,7 @@ def scan_folder():
     print(f"  Scan complete: {count} photos across {len(groups)} slots")
     return groups, error
 
-# ── AI photo analysis ─────────────────────────────────────────────────────────
+# -- AI photo analysis ---------------------------------------------------------
 
 _SUPPORTED_MEDIA = {
     '.jpg': 'image/jpeg',
@@ -195,9 +202,12 @@ def _prepare_image(path):
     return None, None
 
 
-_SCREEN_PROMPT = 'Does this photo contain a baby, infant, or toddler? Reply with ONLY: {"has_baby": true} or {"has_baby": false}'
+_SCREEN_PROMPT = (
+    'Does this photo contain a baby, infant, or toddler (under age 3)? '
+    'Reply with ONLY valid JSON: {"has_baby": true} or {"has_baby": false}'
+)
 
-_TAG_PROMPT = """This photo contains a baby. Return ONLY valid JSON:
+_TAG_PROMPT = """This photo contains a baby. Return ONLY valid JSON with no extra text:
 {
   "people": [],
   "mood": "",
@@ -262,49 +272,64 @@ def tag_photo(path):
     result = _call_claude(b64, media_type, _TAG_PROMPT, max_tokens=250)
     return path, result
 
-def analyze_photos_two_pass(valid_paths):
+def screen_photos_only(valid_paths):
     """
-    Two-pass analysis:
-    1. Quick has_baby screen for all photos (8 workers, tiny response)
-    2. Full tagging only for baby photos (4 workers)
-    Returns dict: path → {has_baby, people, mood, activity, is_milestone, caption}
+    Pass 1 only: quick has_baby screen (8 parallel workers).
+    Returns dict: path -> True/False
     """
-    tags = {}
     total = len(valid_paths)
-
-    # Pass 1: screen all photos
-    print(f'  Pass 1: screening {total} photos for baby…')
-    baby_paths = []
+    print(f'  Screening {total} photos for baby...')
+    results = {}
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(screen_photo, p): p for p in valid_paths}
         for future in futures:
             path, has_baby = future.result()
-            if has_baby is None:
-                continue  # unsupported format
-            tags[path] = {'has_baby': has_baby}
-            if has_baby:
-                baby_paths.append(path)
+            if has_baby is not None:
+                results[path] = has_baby
+    baby_count = sum(1 for v in results.values() if v)
+    print(f'  Screen done: {baby_count}/{total} are baby photos')
+    return results
 
-    print(f'  Pass 1 done: {len(baby_paths)}/{total} are baby photos')
-
-    if not baby_paths:
-        return tags
-
-    # Pass 2: full tag only baby photos
-    print(f'  Pass 2: tagging {len(baby_paths)} baby photos…')
+def tag_photos_only(valid_paths):
+    """
+    Pass 2 only: full tagging for photos already confirmed to contain a baby (4 workers).
+    Returns dict: path -> {people, mood, activity, is_milestone, caption}
+    """
+    total = len(valid_paths)
+    print(f'  Full-tagging {total} baby photos...')
+    tags = {}
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(tag_photo, p): p for p in baby_paths}
+        futures = {executor.submit(tag_photo, p): p for p in valid_paths}
         for future in futures:
             path, result = future.result()
             if result:
-                tags[path].update(result)
-                print(f'  ✓ {os.path.basename(path)}: {result.get("activity","?")} / {result.get("mood","?")}')
+                tags[path] = result
+                print(f'  ok {os.path.basename(path)}: {result.get("activity","?")} / {result.get("mood","?")}')
             else:
-                print(f'  ⚠ Tagging failed for {os.path.basename(path)}')
-
+                print(f'  warn Tagging failed for {os.path.basename(path)}')
     return tags
 
-# ── HTTP server ────────────────────────────────────────────────────────────────
+# -- HTTP server ----------------------------------------------------------------
+
+def _validate_paths(paths):
+    """Return only paths that exist and are within SCAN_FOLDER."""
+    scan_abs = os.path.abspath(SCAN_FOLDER)
+    return [
+        p for p in paths
+        if os.path.isfile(p) and os.path.abspath(p).startswith(scan_abs)
+    ]
+
+def _read_post_body(handler):
+    length = int(handler.headers.get('Content-Length', 0))
+    return handler.rfile.read(length)
+
+def _json_response(handler, data):
+    body = json.dumps(data).encode()
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header('Content-Type', 'application/json')
+    handler.end_headers()
+    handler.wfile.write(body)
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -312,7 +337,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
 
     def do_OPTIONS(self):
@@ -323,70 +348,48 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
 
-        if parsed.path == '/analyze':
-            length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(length)
-            try:
-                data = json.loads(body)
-                paths = data.get('paths', [])
-            except Exception:
-                self.send_response(400)
-                self.end_headers()
-                return
-
-            if not AI_AVAILABLE:
-                body = json.dumps({
-                    'tags': {},
-                    'error': 'ANTHROPIC_API_KEY not set. Run: set ANTHROPIC_API_KEY=sk-...'
-                }).encode()
-                self.send_response(200)
-                self._cors()
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(body)
-                return
-
-            # Validate paths are within scan folder
-            scan_abs = os.path.abspath(SCAN_FOLDER)
-            valid_paths = [
-                p for p in paths
-                if os.path.isfile(p) and os.path.abspath(p).startswith(scan_abs)
-            ]
-
-            tags = analyze_photos_two_pass(valid_paths)
-
-            response_body = json.dumps({'tags': tags}).encode()
-            self.send_response(200)
-            self._cors()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(response_body)
-
-        else:
+        if parsed.path not in ('/screen', '/analyze'):
             self.send_response(404)
             self.end_headers()
+            return
+
+        try:
+            data = json.loads(_read_post_body(self))
+            paths = data.get('paths', [])
+        except Exception:
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        if not AI_AVAILABLE:
+            _json_response(self, {
+                'error': 'ANTHROPIC_API_KEY not set. Run: set ANTHROPIC_API_KEY=sk-...'
+            })
+            return
+
+        valid_paths = _validate_paths(paths)
+
+        if parsed.path == '/screen':
+            # Pass 1: quick has_baby classification
+            results = screen_photos_only(valid_paths)
+            _json_response(self, {'results': results})
+
+        elif parsed.path == '/analyze':
+            # Pass 2: full tagging (caller already knows these are baby photos)
+            tags = tag_photos_only(valid_paths)
+            _json_response(self, {'tags': tags})
 
     def do_GET(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
 
         if parsed.path == '/status':
-            body = json.dumps({'ok': True, 'folder': SCAN_FOLDER}).encode()
-            self.send_response(200)
-            self._cors()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(body)
+            _json_response(self, {'ok': True, 'folder': SCAN_FOLDER})
 
         elif parsed.path == '/scan':
-            print(f"  Scanning {SCAN_FOLDER} …")
+            print(f"  Scanning {SCAN_FOLDER}...")
             groups, err = scan_folder()
-            body = json.dumps({'groups': groups, 'error': err}).encode()
-            self.send_response(200)
-            self._cors()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(body)
+            _json_response(self, {'groups': groups, 'error': err})
 
         elif parsed.path == '/photo':
             path = qs.get('path', [''])[0]
@@ -414,19 +417,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    ai_status = '✓ AI tagging ON  (Claude Vision)' if AI_AVAILABLE else '✗ AI tagging OFF (set ANTHROPIC_API_KEY)'
+    ai_status = 'AI ON (Claude Vision)' if AI_AVAILABLE else 'AI OFF (set ANTHROPIC_API_KEY)'
     print()
-    print('  ┌─────────────────────────────────────────────┐')
-    print('  │          GrowBook Scanner                   │')
-    print('  ├─────────────────────────────────────────────┤')
-    print(f'  │  Folder : {SCAN_FOLDER[:35]:<35} │')
-    print(f'  │  Port   : {PORT:<35} │')
-    print(f'  │  AI     : {ai_status:<35} │')
-    print('  ├─────────────────────────────────────────────┤')
-    print('  │  Keep this window open, then click ✨       │')
-    print('  │  in GrowBook to scan and import photos.     │')
-    print('  │  Press Ctrl+C to stop.                      │')
-    print('  └─────────────────────────────────────────────┘')
+    print('  +-------------------------------------------------+')
+    print('  |           GrowBook Scanner                      |')
+    print('  +-------------------------------------------------+')
+    print(f'  |  Folder : {SCAN_FOLDER[:37]:<37} |')
+    print(f'  |  Port   : {PORT:<37} |')
+    print(f'  |  AI     : {ai_status:<37} |')
+    print('  +-------------------------------------------------+')
+    print('  |  /screen = fast has_baby check (import step)    |')
+    print('  |  /analyze = full tags (week editor, on demand)  |')
+    print('  +-------------------------------------------------+')
     print()
     try:
         server = HTTPServer(('localhost', PORT), Handler)

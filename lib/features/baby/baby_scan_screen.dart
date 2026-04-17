@@ -557,9 +557,10 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
   Future<void> _import() async {
     setState(() => _saving = true);
     await BabyScanController.saveSelected(widget.proposals);
-    // Fire-and-forget AI screening — runs in background while user reviews inbox
-    BabyScanController.screenInbox();
-    if (mounted) context.go('/baby/inbox');
+    // Fire-and-forget pass-1 screening (has_baby only) — fast, runs in background
+    BabyScanController.screenAllForImport();
+    // Return to timeline — full tags happen per-slot when user opens each week
+    if (mounted) context.go('/baby');
   }
 
   @override

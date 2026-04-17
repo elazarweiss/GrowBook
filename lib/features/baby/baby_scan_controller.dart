@@ -260,16 +260,15 @@ class BabyScanController {
     }
   }
 
-  // ── Background AI screening ───────────────────────────────────────────────
+  // ── Phase 1: fast has_baby screening (called after import) ──────────────────
 
   /// Call after saveSelected() — fire and forget.
-  /// Posts unscreened inbox photo paths to /analyze, then updates each
-  /// InboxPhoto with has_baby flag and tags.
-  static Future<void> screenInbox() async {
+  /// Posts all unscreened inbox paths to /screen (pass 1 only).
+  /// Only sets hasBaby true/false — no mood/activity/caption yet.
+  static Future<void> screenAllForImport() async {
     final unscreened = BabyRepository.instance.getUnscreenedInbox();
     if (unscreened.isEmpty) return;
 
-    // Map server path (stripped) → InboxPhoto for matching results
     final Map<String, InboxPhoto> pathToPhoto = {};
     for (final photo in unscreened) {
       final serverPath = photo.path.startsWith('server:')
@@ -280,7 +279,7 @@ class BabyScanController {
 
     try {
       final response = await http.post(
-        Uri.parse('$_serverBase/analyze'),
+        Uri.parse('$_serverBase/screen'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'paths': pathToPhoto.keys.toList()}),
       ).timeout(const Duration(minutes: 10));
@@ -288,40 +287,38 @@ class BabyScanController {
       if (response.statusCode != 200) return;
 
       final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final tagMap = json['tags'] as Map<String, dynamic>? ?? {};
+      final results = json['results'] as Map<String, dynamic>? ?? {};
 
       for (final entry in pathToPhoto.entries) {
-        final serverPath = entry.key;
-        final photo = entry.value;
-        final tagData = tagMap[serverPath] as Map<String, dynamic>?;
-
-        final screened = photo.copyWithScreening(
-          hasBaby: tagData != null
-              ? (tagData['has_baby'] as bool? ?? false)
-              : false,
-          isMilestone: tagData?['is_milestone'] as bool? ?? false,
-          mood: (tagData?['mood'] as String?)?.toLowerCase(),
-          activity: (tagData?['activity'] as String?)?.toLowerCase(),
-          aiCaption: tagData?['caption'] as String?,
-          people: List<String>.from(tagData?['people'] as List? ?? []),
+        final hasBaby = results[entry.key] as bool? ?? false;
+        final updated = InboxPhoto(
+          id: entry.value.id,
+          path: entry.value.path,
+          date: entry.value.date,
+          slotKey: entry.value.slotKey,
+          hasBaby: hasBaby,
+          // mood/activity/caption left null — filled later per week
         );
-        await BabyRepository.instance.saveInboxPhoto(screened);
+        await BabyRepository.instance.saveInboxPhoto(updated);
       }
     } catch (_) {
       // Screening is best-effort; silently ignore failures
     }
   }
 
-  /// Screen only unscreened inbox photos for a specific slot.
+  // ── Phase 2: full tags per slot (called from week editor) ────────────────────
+
+  /// Full-tag baby photos for one slot that haven't been tagged yet.
+  /// Requires hasBaby == true and mood == null (not yet tagged).
   static Future<void> screenInboxSlot(String slotKey) async {
-    final unscreened = BabyRepository.instance
-        .getUnscreenedInbox()
-        .where((p) => p.slotKey == slotKey)
+    final untagged = BabyRepository.instance
+        .getInboxForSlot(slotKey)
+        .where((p) => p.hasBaby == true && p.mood == null)
         .toList();
-    if (unscreened.isEmpty) return;
+    if (untagged.isEmpty) return;
 
     final Map<String, InboxPhoto> pathToPhoto = {};
-    for (final photo in unscreened) {
+    for (final photo in untagged) {
       final serverPath = photo.path.startsWith('server:')
           ? photo.path.substring(7)
           : photo.path;
@@ -343,7 +340,7 @@ class BabyScanController {
       for (final entry in pathToPhoto.entries) {
         final tagData = tagMap[entry.key] as Map<String, dynamic>?;
         final screened = entry.value.copyWithScreening(
-          hasBaby: tagData != null ? (tagData['has_baby'] as bool? ?? false) : false,
+          hasBaby: true,  // already confirmed
           isMilestone: tagData?['is_milestone'] as bool? ?? false,
           mood: (tagData?['mood'] as String?)?.toLowerCase(),
           activity: (tagData?['activity'] as String?)?.toLowerCase(),
