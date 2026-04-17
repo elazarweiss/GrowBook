@@ -543,8 +543,12 @@ class _ScanResultsView extends StatefulWidget {
   State<_ScanResultsView> createState() => _ScanResultsViewState();
 }
 
+enum _ImportMode { all, babyOnly }
+
 class _ScanResultsViewState extends State<_ScanResultsView> {
   bool _saving = false;
+  bool _screening = false;
+  _ImportMode _importMode = _ImportMode.all;
 
   int get _newSlots =>
       widget.proposals.where((p) => p.importEnabled && !p.hasExisting).length;
@@ -556,10 +560,25 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
 
   Future<void> _import() async {
     setState(() => _saving = true);
+
+    if (_importMode == _ImportMode.babyOnly) {
+      // Screen all candidates with tiny thumbnails (~5x cheaper/faster)
+      setState(() => _screening = true);
+      final babyPaths =
+          await BabyScanController.screenProposalsForBaby(widget.proposals);
+      // Deselect candidates the AI confirmed have no baby
+      for (final p in widget.proposals) {
+        for (final c in p.candidates) {
+          if (!babyPaths.contains(c.serverPath)) {
+            c.selected = false;
+          }
+        }
+      }
+      if (mounted) setState(() => _screening = false);
+    }
+
     await BabyScanController.saveSelected(widget.proposals);
-    // Fire-and-forget pass-1 screening (has_baby only) — fast, runs in background
-    BabyScanController.screenAllForImport();
-    // Return to timeline — full tags happen per-slot when user opens each week
+    // Return to timeline — full AI tags happen when user pins photos per week
     if (mounted) context.go('/baby');
   }
 
@@ -598,7 +617,73 @@ class _ScanResultsViewState extends State<_ScanResultsView> {
           ),
         ),
 
-        const SizedBox(height: 12),
+        // Import mode toggle
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.accentSoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('What to import',
+                    style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.warmBrown)),
+                const SizedBox(height: 8),
+                _ModeOption(
+                  label: 'All photos',
+                  subtitle: 'Instant — you\'ll see everything in the week editor',
+                  selected: _importMode == _ImportMode.all,
+                  onTap: () => setState(() => _importMode = _ImportMode.all),
+                ),
+                const SizedBox(height: 6),
+                _ModeOption(
+                  label: 'Baby photos only  ✨',
+                  subtitle:
+                      'AI scans thumbnails to filter out non-baby photos (~10-15 min, ~\$3)',
+                  selected: _importMode == _ImportMode.babyOnly,
+                  onTap: () =>
+                      setState(() => _importMode = _ImportMode.babyOnly),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Screening-in-progress overlay
+        if (_screening)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.sageGreen.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.sageGreen.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Finding baby photos… this may take a few minutes',
+                      style: GoogleFonts.inter(
+                          fontSize: 13, color: AppColors.sageGreen),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
 
         Expanded(
           child: GridView.builder(
@@ -1119,6 +1204,64 @@ class _SlotPhotoSheetState extends State<_SlotPhotoSheet> {
 
   String _shortDate(DateTime dt) =>
       '${dt.day}/${dt.month}/${dt.year.toString().substring(2)}';
+}
+
+class _ModeOption extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ModeOption(
+      {required this.label,
+      required this.subtitle,
+      required this.selected,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            margin: const EdgeInsets.only(top: 2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected ? AppColors.sageGreen : AppColors.warmTaupe,
+                width: 2,
+              ),
+              color: selected ? AppColors.sageGreen : Colors.transparent,
+            ),
+            child: selected
+                ? const Icon(Icons.check, size: 11, color: Colors.white)
+                : null,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: selected
+                            ? AppColors.warmBrown
+                            : AppColors.warmTaupe)),
+                Text(subtitle,
+                    style: GoogleFonts.inter(
+                        fontSize: 11, color: AppColors.warmTaupe)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Badge extends StatelessWidget {

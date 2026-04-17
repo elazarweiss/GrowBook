@@ -23,7 +23,9 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   String? _activeFilter;
   final Set<String> _selectedIds = {};
   bool _loadingFromServer = false;
-  bool _tagging = false;
+  bool _pinning = false;
+  // Days currently being analyzed (✨ button)
+  final Set<String> _analyzingDays = {};
   // Burst groups that the user has expanded to see all photos
   final Set<String> _expandedBursts = {};
 
@@ -49,7 +51,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     });
 
     if (kIsWeb) await _fetchFromServer();
-    _tagPhotos();
+    // No auto-AI: photos load instantly. User uses ✨ per-day to run AI if needed.
   }
 
   Future<void> _fetchFromServer() async {
@@ -72,27 +74,34 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     if (mounted) setState(() => _loadingFromServer = false);
   }
 
-  Future<void> _tagPhotos() async {
-    // Run full tagging only for baby photos that don't yet have mood/activity tags
-    final hasUntagged = BabyRepository.instance
-        .getInboxForSlot(widget.slot.key)
-        .any((p) => p.hasBaby == true && p.mood == null);
-    if (!hasUntagged) return;
+  // ── Actions ──────────────────────────────────────────────────────────────────
 
-    if (mounted) setState(() => _tagging = true);
-    await BabyScanController.screenInboxSlot(widget.slot.key);
+  /// ✨ Analyze all photos in one day: screen for baby, then full-tag baby photos.
+  Future<void> _analyzeDay(String dateKey, List<InboxPhoto> dayPhotos) async {
+    if (_analyzingDays.contains(dateKey)) return;
+    setState(() => _analyzingDays.add(dateKey));
+    final updated =
+        await BabyScanController.screenAndTagDay(dayPhotos);
     if (!mounted) return;
+    // Merge updated photos back into _photos list
+    final updatedIds = updated.map((p) => p.id).toSet();
+    final merged = _photos
+        .map((p) => updatedIds.contains(p.id)
+            ? updated.firstWhere((u) => u.id == p.id)
+            : p)
+        .toList();
     setState(() {
-      _photos = BabyRepository.instance.getInboxForSlot(widget.slot.key);
-      _tagging = false;
+      _photos = merged;
+      _analyzingDays.remove(dateKey);
     });
   }
 
-  // ── Actions ──────────────────────────────────────────────────────────────────
-
+  /// Pin selected photos to timeline. Runs AI tagging on them first (~5-6s).
   Future<void> _pinToTimeline() async {
     final selected = _photos.where((p) => _selectedIds.contains(p.id)).toList();
-    await BabyRepository.instance.setFeaturedPhotos(widget.slot.key, selected);
+    if (selected.isEmpty) return;
+    setState(() => _pinning = true);
+    await BabyScanController.tagAndPin(widget.slot.key, selected);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
@@ -203,17 +212,6 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     );
   }
 
-  static String _dayLabel(String dateKey) {
-    final parts = dateKey.split('-');
-    final dt = DateTime(
-        int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
-    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${weekdays[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}';
-  }
 
   // ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -252,7 +250,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
           ],
         ),
         actions: [
-          if (_tagging || _loadingFromServer)
+          if (_loadingFromServer)
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: Row(
@@ -264,11 +262,9 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    _tagging ? 'Analyzing…' : 'Loading…',
-                    style: GoogleFonts.inter(
-                        fontSize: 12, color: AppColors.warmTaupe),
-                  ),
+                  Text('Loading…',
+                      style: GoogleFonts.inter(
+                          fontSize: 12, color: AppColors.warmTaupe)),
                 ],
               ),
             ),
@@ -369,28 +365,15 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       child: CustomScrollView(
         slivers: [
           for (final entry in days.entries) ...[
-            // Day header
+            // Day header with ✨ analyze button
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-                child: Row(
-                  children: [
-                    Text(
-                      _dayLabel(entry.key),
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.warmBrown,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${entry.value.length} photo${entry.value.length == 1 ? '' : 's'}',
-                      style: GoogleFonts.inter(
-                          fontSize: 12, color: AppColors.warmTaupe),
-                    ),
-                  ],
-                ),
+              child: _DayHeader(
+                dateKey: entry.key,
+                photoCount: entry.value.length,
+                analyzing: _analyzingDays.contains(entry.key),
+                allTagged: entry.value.every(
+                    (p) => p.hasBaby != null),
+                onAnalyze: () => _analyzeDay(entry.key, entry.value),
               ),
             ),
             // Photo grid for this day (burst-aware)
@@ -666,7 +649,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
           children: [
             Expanded(
               child: Text(
-                '$count selected',
+                _pinning ? 'Analyzing & pinning…' : '$count selected',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   color: AppColors.warmBrown,
@@ -675,13 +658,20 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
               ),
             ),
             ElevatedButton.icon(
-              onPressed: _pinToTimeline,
-              icon: const Icon(Icons.push_pin_outlined, size: 18),
+              onPressed: _pinning ? null : _pinToTimeline,
+              icon: _pinning
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.push_pin_outlined, size: 18),
               label: Text('Pin to ${_slotLabel()}',
                   style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.sageGreen,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: AppColors.sageGreen.withOpacity(0.6),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -692,5 +682,78 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
         ),
       ),
     );
+  }
+}
+
+// ── Day header with optional ✨ analyze button ─────────────────────────────────
+
+class _DayHeader extends StatelessWidget {
+  final String dateKey;
+  final int photoCount;
+  final bool analyzing;
+  final bool allTagged;
+  final VoidCallback onAnalyze;
+
+  const _DayHeader({
+    required this.dateKey,
+    required this.photoCount,
+    required this.analyzing,
+    required this.allTagged,
+    required this.onAnalyze,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 8, 8),
+      child: Row(
+        children: [
+          Text(
+            _label,
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.warmBrown,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$photoCount photo${photoCount == 1 ? '' : 's'}',
+            style: GoogleFonts.inter(fontSize: 12, color: AppColors.warmTaupe),
+          ),
+          const Spacer(),
+          if (!allTagged)
+            analyzing
+                ? const Padding(
+                    padding: EdgeInsets.only(right: 12),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : IconButton(
+                    icon: const Text('✨', style: TextStyle(fontSize: 15)),
+                    tooltip: 'Find baby photos & add tags',
+                    onPressed: onAnalyze,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
+        ],
+      ),
+    );
+  }
+
+  String get _label {
+    final parts = dateKey.split('-');
+    final dt =
+        DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+    const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const mo = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${wd[dt.weekday - 1]}, ${mo[dt.month - 1]} ${dt.day}';
   }
 }

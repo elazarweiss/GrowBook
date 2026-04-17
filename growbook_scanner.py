@@ -237,14 +237,16 @@ _SUPPORTED_MEDIA = {
 _MAX_PX    = 1568            # Claude recommended max dimension
 _MAX_BYTES = 4 * 1024 * 1024  # 4 MB safety margin (API limit is 5 MB)
 
-def _prepare_image(path):
+def _prepare_image(path, max_px=None):
     """Return (jpeg_bytes, 'image/jpeg') resized to fit Claude's limits."""
+    if max_px is None:
+        max_px = _MAX_PX
     try:
         with Image.open(path) as img:
             img = img.convert('RGB')
             w, h = img.size
-            if max(w, h) > _MAX_PX:
-                scale = _MAX_PX / max(w, h)
+            if max(w, h) > max_px:
+                scale = max_px / max(w, h)
                 img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
             for quality in (85, 70, 55, 40):
                 buf = io.BytesIO()
@@ -255,6 +257,8 @@ def _prepare_image(path):
     except Exception:
         pass
     return None, None
+
+_THUMB_PX = 300  # Tiny thumbnail for has_baby screening — ~170 vision tokens vs ~900 full
 
 
 _SCREEN_PROMPT = (
@@ -300,19 +304,20 @@ def _call_claude(b64, media_type, prompt, max_tokens):
         pass
     return None
 
-def _prepare_b64(path):
+def _prepare_b64(path, max_px=None):
     """Returns (b64, media_type) or (None, None) if unsupported/failed."""
     ext = os.path.splitext(path)[1].lower()
     if ext not in _SUPPORTED_MEDIA and ext not in ('.heic', '.heif'):
         return None, None
-    data, media_type = _prepare_image(path)
+    data, media_type = _prepare_image(path, max_px=max_px)
     if data is None:
         return None, None
     return base64.standard_b64encode(data).decode(), media_type
 
-def screen_photo(path):
+def screen_photo(path, use_thumb=False):
     """Pass 1: quick has_baby check. Returns (path, True/False) or (path, None) on error."""
-    b64, media_type = _prepare_b64(path)
+    max_px = _THUMB_PX if use_thumb else None
+    b64, media_type = _prepare_b64(path, max_px=max_px)
     if b64 is None:
         return path, None
     result = _call_claude(b64, media_type, _SCREEN_PROMPT, max_tokens=20)
@@ -327,16 +332,20 @@ def tag_photo(path):
     result = _call_claude(b64, media_type, _TAG_PROMPT, max_tokens=250)
     return path, result
 
-def screen_photos_only(valid_paths):
+def screen_photos_only(valid_paths, use_thumb=False):
     """
-    Pass 1 only: quick has_baby screen (8 parallel workers).
+    Pass 1 only: quick has_baby screen.
+    use_thumb=True uses 300px thumbnails (~5x cheaper/faster) for bulk screening.
+    use_thumb=False uses full resolution for accuracy.
     Returns dict: path -> True/False
     """
     total = len(valid_paths)
-    print(f'  Screening {total} photos for baby...')
+    mode = 'thumbnail' if use_thumb else 'full-res'
+    workers = 16 if use_thumb else 8  # tiny payloads allow more concurrency
+    print(f'  Screening {total} photos for baby ({mode}, {workers} workers)...')
     results = {}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(screen_photo, p): p for p in valid_paths}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(screen_photo, p, use_thumb): p for p in valid_paths}
         for future in futures:
             path, has_baby = future.result()
             if has_baby is not None:
@@ -426,7 +435,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == '/screen':
             # Pass 1: quick has_baby classification
-            results = screen_photos_only(valid_paths)
+            # thumb=true uses 300px thumbnails: ~5x cheaper/faster for bulk screening
+            use_thumb = bool(data.get('thumb', False))
+            results = screen_photos_only(valid_paths, use_thumb=use_thumb)
             _json_response(self, {'results': results})
 
         elif parsed.path == '/analyze':

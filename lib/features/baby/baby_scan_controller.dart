@@ -267,50 +267,182 @@ class BabyScanController {
     }
   }
 
-  // ── Phase 1: fast has_baby screening (called after import) ──────────────────
+  // ── Import-time screening (user-opted-in, thumbnail mode) ───────────────────
 
-  /// Call after saveSelected() — fire and forget.
-  /// Posts all unscreened inbox paths to /screen (pass 1 only).
-  /// Only sets hasBaby true/false — no mood/activity/caption yet.
-  static Future<void> screenAllForImport() async {
-    final unscreened = BabyRepository.instance.getUnscreenedInbox();
-    if (unscreened.isEmpty) return;
+  /// Screen all candidates in [proposals] using tiny thumbnails (300px).
+  /// ~5x cheaper and faster than full-resolution screening.
+  /// Returns the set of server paths confirmed to contain a baby.
+  /// Called only when user explicitly chooses "Baby photos only" import mode.
+  static Future<Set<String>> screenProposalsForBaby(
+      List<ScanProposal> proposals) async {
+    final paths = <String>[];
+    for (final p in proposals) {
+      for (final c in p.candidates) {
+        paths.add(c.serverPath);
+      }
+    }
+    if (paths.isEmpty) return {};
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_serverBase/screen'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'paths': paths, 'thumb': true}),
+      ).timeout(const Duration(minutes: 20));
+
+      if (response.statusCode != 200) return {};
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final results = json['results'] as Map<String, dynamic>? ?? {};
+      return results.entries
+          .where((e) => e.value == true)
+          .map((e) => e.key)
+          .toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // ── Pin time: tag selected photos then persist to timeline ──────────────────
+
+  /// Run full AI tagging on [selected] photos, then pin them to the timeline.
+  /// This is the main AI trigger: called only when user commits to pinning.
+  /// Typically 1-3 photos → ~5-6 second wait, then done.
+  static Future<void> tagAndPin(
+      String slotKey, List<InboxPhoto> selected) async {
+    if (selected.isEmpty) return;
 
     final Map<String, InboxPhoto> pathToPhoto = {};
-    for (final photo in unscreened) {
+    for (final photo in selected) {
       final serverPath = photo.path.startsWith('server:')
           ? photo.path.substring(7)
           : photo.path;
       pathToPhoto[serverPath] = photo;
     }
 
+    List<InboxPhoto> toPin = selected;
+
     try {
       final response = await http.post(
-        Uri.parse('$_serverBase/screen'),
+        Uri.parse('$_serverBase/analyze'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'paths': pathToPhoto.keys.toList()}),
-      ).timeout(const Duration(minutes: 10));
+      ).timeout(const Duration(minutes: 2));
 
-      if (response.statusCode != 200) return;
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final tagMap = json['tags'] as Map<String, dynamic>? ?? {};
 
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final results = json['results'] as Map<String, dynamic>? ?? {};
-
-      for (final entry in pathToPhoto.entries) {
-        final hasBaby = results[entry.key] as bool? ?? false;
-        final updated = InboxPhoto(
-          id: entry.value.id,
-          path: entry.value.path,
-          date: entry.value.date,
-          slotKey: entry.value.slotKey,
-          hasBaby: hasBaby,
-          // mood/activity/caption left null — filled later per week
-        );
-        await BabyRepository.instance.saveInboxPhoto(updated);
+        toPin = [];
+        for (final entry in pathToPhoto.entries) {
+          final tagData = tagMap[entry.key] as Map<String, dynamic>?;
+          toPin.add(entry.value.copyWithScreening(
+            hasBaby: true,
+            isMilestone: tagData?['is_milestone'] as bool? ?? false,
+            mood: (tagData?['mood'] as String?)?.toLowerCase(),
+            activity: (tagData?['activity'] as String?)?.toLowerCase(),
+            aiCaption: tagData?['caption'] as String?,
+            people: List<String>.from(tagData?['people'] as List? ?? []),
+          ));
+        }
       }
     } catch (_) {
-      // Screening is best-effort; silently ignore failures
+      // Tag failure is non-fatal — pin without tags
     }
+
+    await BabyRepository.instance.setFeaturedPhotos(slotKey, toPin);
+  }
+
+  // ── On-demand per-day analysis (week editor ✨ button) ───────────────────────
+
+  /// Screen + fully tag all photos in [photos] (a single day's worth).
+  /// Uses thumbnail screening first, then full-res tagging for baby photos.
+  /// Saves results back to Hive. Returns the updated list.
+  static Future<List<InboxPhoto>> screenAndTagDay(
+      List<InboxPhoto> photos) async {
+    if (photos.isEmpty) return photos;
+
+    // Step 1: Thumbnail screen for unscreened photos
+    final unscreened =
+        photos.where((p) => p.hasBaby == null).toList();
+    if (unscreened.isNotEmpty) {
+      final pathToPhoto = <String, InboxPhoto>{};
+      for (final p in unscreened) {
+        final sp = p.path.startsWith('server:') ? p.path.substring(7) : p.path;
+        pathToPhoto[sp] = p;
+      }
+      try {
+        final r = await http.post(
+          Uri.parse('$_serverBase/screen'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'paths': pathToPhoto.keys.toList(), 'thumb': true}),
+        ).timeout(const Duration(minutes: 5));
+        if (r.statusCode == 200) {
+          final results =
+              (jsonDecode(r.body)['results'] as Map<String, dynamic>?) ?? {};
+          for (final entry in pathToPhoto.entries) {
+            final hasBaby = results[entry.key] as bool? ?? false;
+            final updated = InboxPhoto(
+              id: entry.value.id,
+              path: entry.value.path,
+              date: entry.value.date,
+              slotKey: entry.value.slotKey,
+              hasBaby: hasBaby,
+              burstId: entry.value.burstId,
+              burstRepresentative: entry.value.burstRepresentative,
+            );
+            await BabyRepository.instance.saveInboxPhoto(updated);
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Step 2: Full tag for baby photos that aren't yet tagged
+    final babyUntagged = BabyRepository.instance
+        .getInboxForSlot(photos.first.slotKey)
+        .where((p) =>
+            photos.any((orig) => orig.id == p.id) &&
+            p.hasBaby == true &&
+            p.mood == null)
+        .toList();
+
+    if (babyUntagged.isNotEmpty) {
+      final pathToPhoto = <String, InboxPhoto>{};
+      for (final p in babyUntagged) {
+        final sp = p.path.startsWith('server:') ? p.path.substring(7) : p.path;
+        pathToPhoto[sp] = p;
+      }
+      try {
+        final r = await http.post(
+          Uri.parse('$_serverBase/analyze'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'paths': pathToPhoto.keys.toList()}),
+        ).timeout(const Duration(minutes: 5));
+        if (r.statusCode == 200) {
+          final tagMap =
+              (jsonDecode(r.body)['tags'] as Map<String, dynamic>?) ?? {};
+          for (final entry in pathToPhoto.entries) {
+            final tagData = tagMap[entry.key] as Map<String, dynamic>?;
+            final screened = entry.value.copyWithScreening(
+              hasBaby: true,
+              isMilestone: tagData?['is_milestone'] as bool? ?? false,
+              mood: (tagData?['mood'] as String?)?.toLowerCase(),
+              activity: (tagData?['activity'] as String?)?.toLowerCase(),
+              aiCaption: tagData?['caption'] as String?,
+              people:
+                  List<String>.from(tagData?['people'] as List? ?? []),
+            );
+            await BabyRepository.instance.saveInboxPhoto(screened);
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Return fresh data from Hive for this slot filtered to this day's photos
+    final allSlot =
+        BabyRepository.instance.getInboxForSlot(photos.first.slotKey);
+    final ids = photos.map((p) => p.id).toSet();
+    return allSlot.where((p) => ids.contains(p.id)).toList();
   }
 
   // ── Phase 2: full tags per slot (called from week editor) ────────────────────
