@@ -66,7 +66,14 @@ class BabyScanController {
         final date =
             DateTime.tryParse(p['date'] as String? ?? '') ?? DateTime.now();
         final id = 'server:$serverPath';
-        return InboxPhoto(id: id, path: id, date: date, slotKey: slotKey);
+        return InboxPhoto(
+          id: id,
+          path: id,
+          date: date,
+          slotKey: slotKey,
+          burstId: p['burst_id'] as String?,
+          burstRepresentative: p['burst_representative'] as bool? ?? true,
+        );
       }).toList();
     }
 

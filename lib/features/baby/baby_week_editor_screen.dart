@@ -24,6 +24,8 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   final Set<String> _selectedIds = {};
   bool _loadingFromServer = false;
   bool _tagging = false;
+  // Burst groups that the user has expanded to see all photos
+  final Set<String> _expandedBursts = {};
 
   @override
   void initState() {
@@ -332,6 +334,27 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
 
   // ── Grid grouped by day ───────────────────────────────────────────────────────
 
+  /// Returns the display list for a day, respecting burst collapse state.
+  /// Collapsed bursts show only the representative; expanded bursts show all.
+  List<InboxPhoto> _displayPhotosForDay(List<InboxPhoto> dayPhotos) {
+    final result = <InboxPhoto>[];
+    for (final photo in dayPhotos) {
+      if (photo.burstId == null) {
+        result.add(photo); // standalone
+      } else if (photo.burstRepresentative) {
+        result.add(photo); // burst cover — always shown
+      } else if (_expandedBursts.contains(photo.burstId)) {
+        result.add(photo); // expanded burst member
+      }
+      // else: collapsed burst non-representative — skip
+    }
+    return result;
+  }
+
+  /// How many non-representative photos are hidden in a burst group for a day.
+  int _burstHiddenCount(List<InboxPhoto> dayPhotos, String burstId) =>
+      dayPhotos.where((p) => p.burstId == burstId && !p.burstRepresentative).length;
+
   Widget _buildGrid(List<InboxPhoto> allBaby, List<InboxPhoto> visible) {
     final days = _groupByDay(allBaby);
 
@@ -370,25 +393,39 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                 ),
               ),
             ),
-            // Photo grid for this day
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              sliver: SliverGrid(
-                delegate: SliverChildBuilderDelegate(
-                  (ctx, i) => _buildPhotoCard(
-                    photo: entry.value[i],
-                    dimmed: !visible.contains(entry.value[i]),
+            // Photo grid for this day (burst-aware)
+            Builder(builder: (ctx) {
+              final displayed = _displayPhotosForDay(entry.value);
+              return SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                sliver: SliverGrid(
+                  delegate: SliverChildBuilderDelegate(
+                    (ctx2, i) {
+                      final photo = displayed[i];
+                      final isBurstCover = photo.burstId != null &&
+                          photo.burstRepresentative;
+                      final hiddenCount = isBurstCover
+                          ? _burstHiddenCount(entry.value, photo.burstId!)
+                          : 0;
+                      return _buildPhotoCard(
+                        photo: photo,
+                        dimmed: !visible.contains(photo),
+                        burstHiddenCount: hiddenCount,
+                        burstExpanded: photo.burstId != null &&
+                            _expandedBursts.contains(photo.burstId),
+                      );
+                    },
+                    childCount: displayed.length,
                   ),
-                  childCount: entry.value.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 6,
+                    crossAxisSpacing: 6,
+                    childAspectRatio: 0.82,
+                  ),
                 ),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  mainAxisSpacing: 6,
-                  crossAxisSpacing: 6,
-                  childAspectRatio: 0.82,
-                ),
-              ),
-            ),
+              );
+            }),
           ],
           // Bottom padding so last row clears the pin bar
           const SliverToBoxAdapter(child: SizedBox(height: 110)),
@@ -400,9 +437,12 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   Widget _buildPhotoCard({
     required InboxPhoto photo,
     required bool dimmed,
+    int burstHiddenCount = 0,
+    bool burstExpanded = false,
   }) {
     final isSelected = _selectedIds.contains(photo.id);
     final hasTag = photo.mood != null || photo.activity != null;
+    final isBurstCover = photo.burstId != null && photo.burstRepresentative;
 
     return GestureDetector(
       onTap: () {
@@ -410,6 +450,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
           setState(() => _activeFilter = null);
           return;
         }
+        // Long-press expands burst; tap selects
         setState(() {
           if (isSelected) {
             _selectedIds.remove(photo.id);
@@ -418,6 +459,15 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
           }
         });
       },
+      onLongPress: isBurstCover && burstHiddenCount > 0
+          ? () => setState(() {
+                if (burstExpanded) {
+                  _expandedBursts.remove(photo.burstId);
+                } else {
+                  _expandedBursts.add(photo.burstId!);
+                }
+              })
+          : null,
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 150),
         opacity: dimmed ? 0.25 : 1.0,
@@ -452,6 +502,35 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                         top: 4,
                         left: 4,
                         child: Text('⭐', style: TextStyle(fontSize: 12)),
+                      ),
+                    // Burst badge: "📷+3  hold" when collapsed
+                    if (isBurstCover && burstHiddenCount > 0)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                              colors: [
+                                Colors.black.withOpacity(0.65),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              burstExpanded
+                                  ? '📷 hold to collapse'
+                                  : '📷 +$burstHiddenCount similar',
+                              style: const TextStyle(
+                                  fontSize: 8, color: Colors.white),
+                            ),
+                          ),
+                        ),
                       ),
                     if (isSelected)
                       Positioned(

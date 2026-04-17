@@ -12,6 +12,10 @@ class InboxPhoto {
   String? activity;
   String? aiCaption;
   List<String> people;
+  // Burst grouping: photos taken within ~10s of each other share a burstId.
+  // burstRepresentative=true means this is the "cover" shown when collapsed.
+  String? burstId;
+  bool burstRepresentative;
 
   InboxPhoto({
     required this.id,
@@ -24,6 +28,8 @@ class InboxPhoto {
     this.activity,
     this.aiCaption,
     this.people = const [],
+    this.burstId,
+    this.burstRepresentative = true,
   });
 
   InboxPhoto copyWithScreening({
@@ -45,6 +51,8 @@ class InboxPhoto {
       activity: activity,
       aiCaption: aiCaption,
       people: people,
+      burstId: burstId,
+      burstRepresentative: burstRepresentative,
     );
   }
 }
@@ -71,6 +79,14 @@ class InboxPhotoAdapter extends TypeAdapter<InboxPhoto> {
     final aiCaption = hasCaption ? reader.readString() : null;
     final peopleCount = reader.readInt();
     final people = List.generate(peopleCount, (_) => reader.readString());
+    // Burst fields (added in data version 3 — safe to default for older records)
+    String? burstId;
+    bool burstRepresentative = true;
+    try {
+      final hasBurstId = reader.readBool();
+      burstId = hasBurstId ? reader.readString() : null;
+      burstRepresentative = reader.readBool();
+    } catch (_) {}
     return InboxPhoto(
       id: id,
       path: path,
@@ -82,6 +98,8 @@ class InboxPhotoAdapter extends TypeAdapter<InboxPhoto> {
       activity: activity,
       aiCaption: aiCaption,
       people: people,
+      burstId: burstId,
+      burstRepresentative: burstRepresentative,
     );
   }
 
@@ -102,5 +120,9 @@ class InboxPhotoAdapter extends TypeAdapter<InboxPhoto> {
     if (obj.aiCaption != null) writer.writeString(obj.aiCaption!);
     writer.writeInt(obj.people.length);
     for (final p in obj.people) { writer.writeString(p); }
+    // Burst fields
+    writer.writeBool(obj.burstId != null);
+    if (obj.burstId != null) writer.writeString(obj.burstId!);
+    writer.writeBool(obj.burstRepresentative);
   }
 }

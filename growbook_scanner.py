@@ -163,32 +163,67 @@ def scan_folder():
             })
             count += 1
 
-    # Sort each group chronologically, then deduplicate burst shots
+    # Sort each group chronologically, then tag burst groups
     for key in groups:
         groups[key].sort(key=lambda x: x['date'])
-        groups[key] = _dedup_bursts(groups[key])
+        _tag_bursts(groups[key])
 
-    total_deduped = sum(len(v) for v in groups.values())
-    print(f"  Scan complete: {total_deduped} photos across {len(groups)} slots (after burst dedup)")
+    total = sum(len(v) for v in groups.values())
+    print(f"  Scan complete: {total} photos across {len(groups)} slots")
     return groups, error
 
-def _dedup_bursts(photos, gap_seconds=60):
+def _tag_bursts(photos, gap_seconds=10):
     """
-    Remove burst duplicates. If multiple photos are taken within gap_seconds
-    of each other, keep only the first (chronologically).
+    Tag photos that were taken in rapid succession (within gap_seconds of each
+    other) with a shared burst_id. The first photo in a burst gets
+    burst_representative=True; the rest get burst_representative=False.
+    Photos with burst_id=None are standalone shots.
     """
     if len(photos) <= 1:
-        return photos
-    result = [photos[0]]
-    for photo in photos[1:]:
+        return
+    burst_counter = [0]
+
+    def new_burst_id():
+        burst_counter[0] += 1
+        return f'burst_{burst_counter[0]}'
+
+    current_burst = None
+    current_burst_start = None
+
+    for i, photo in enumerate(photos):
         try:
-            prev_dt = datetime.fromisoformat(result[-1]['date'])
             curr_dt = datetime.fromisoformat(photo['date'])
-            if (curr_dt - prev_dt).total_seconds() >= gap_seconds:
-                result.append(photo)
         except Exception:
-            result.append(photo)
-    return result
+            photo['burst_id'] = None
+            photo['burst_representative'] = True
+            current_burst = None
+            continue
+
+        if i == 0:
+            photo['burst_id'] = None
+            photo['burst_representative'] = True
+            current_burst_start = curr_dt
+            current_burst = None
+            continue
+
+        prev_dt = current_burst_start
+        delta = (curr_dt - prev_dt).total_seconds()
+
+        if delta <= gap_seconds:
+            # Part of a burst
+            if current_burst is None:
+                # Start a new burst — retroactively tag the previous photo
+                current_burst = new_burst_id()
+                photos[i - 1]['burst_id'] = current_burst
+                photos[i - 1]['burst_representative'] = True
+            photo['burst_id'] = current_burst
+            photo['burst_representative'] = False
+        else:
+            # Gap — standalone photo
+            photo['burst_id'] = None
+            photo['burst_representative'] = True
+            current_burst = None
+            current_burst_start = curr_dt
 
 # -- AI photo analysis ---------------------------------------------------------
 
