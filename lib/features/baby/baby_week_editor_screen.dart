@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -21,11 +20,10 @@ class BabyWeekEditorScreen extends StatefulWidget {
 
 class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   List<InboxPhoto> _photos = [];
-  String? _activeFilter;          // null = all
+  String? _activeFilter;
   final Set<String> _selectedIds = {};
   bool _loadingFromServer = false;
   bool _tagging = false;
-  List<_PhotoLayout> _layouts = const [];
 
   @override
   void initState() {
@@ -33,7 +31,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     _loadPhotos();
   }
 
-  // ── Data loading ────────────────────────────────────────────────────────────
+  // ── Data loading ─────────────────────────────────────────────────────────────
 
   Future<void> _loadPhotos() async {
     final existing = BabyRepository.instance.getInboxForSlot(widget.slot.key);
@@ -46,7 +44,6 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       _selectedIds
         ..clear()
         ..addAll(existing.where((p) => featured.contains(p.path)).map((p) => p.id));
-      _layouts = _buildLayouts(existing.length);
     });
 
     if (kIsWeb) await _fetchFromServer();
@@ -56,8 +53,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   Future<void> _fetchFromServer() async {
     if (mounted) setState(() => _loadingFromServer = true);
     try {
-      final incoming =
-          await BabyScanController.fetchPhotosForSlot(widget.slot);
+      final incoming = await BabyScanController.fetchPhotosForSlot(widget.slot);
       bool added = false;
       for (final photo in incoming) {
         if (BabyRepository.instance.getInboxPhoto(photo.id) == null) {
@@ -66,11 +62,8 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
         }
       }
       if (added && mounted) {
-        final updated =
-            BabyRepository.instance.getInboxForSlot(widget.slot.key);
         setState(() {
-          _photos = updated;
-          _layouts = _buildLayouts(updated.length);
+          _photos = BabyRepository.instance.getInboxForSlot(widget.slot.key);
         });
       }
     } catch (_) {}
@@ -93,15 +86,11 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     });
   }
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  // ── Actions ──────────────────────────────────────────────────────────────────
 
   Future<void> _pinToTimeline() async {
-    final selected =
-        _photos.where((p) => _selectedIds.contains(p.id)).toList();
-    await BabyRepository.instance.setFeaturedPhotos(
-      widget.slot.key,
-      selected,
-    );
+    final selected = _photos.where((p) => _selectedIds.contains(p.id)).toList();
+    await BabyRepository.instance.setFeaturedPhotos(widget.slot.key, selected);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
@@ -111,7 +100,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     Navigator.of(context).pop();
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────────
 
   String _slotLabel() {
     final v = widget.slot.value;
@@ -145,22 +134,18 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   }
 
   static String _fmt(DateTime d) {
-    const m = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec'
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
-    return '${m[d.month - 1]} ${d.day}';
+    return '${months[d.month - 1]} ${d.day}';
   }
 
   List<InboxPhoto> get _visiblePhotos {
     final baby = _photos.where((p) => p.hasBaby != false).toList();
     if (_activeFilter == null) return baby;
-    if (_activeFilter == 'milestone') {
-      return baby.where((p) => p.isMilestone).toList();
-    }
-    return baby
-        .where((p) => p.mood == _activeFilter || p.activity == _activeFilter)
-        .toList();
+    if (_activeFilter == 'milestone') return baby.where((p) => p.isMilestone).toList();
+    return baby.where((p) => p.mood == _activeFilter || p.activity == _activeFilter).toList();
   }
 
   Set<String> get _availableFilters {
@@ -185,7 +170,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       'feeding': '🍼 Feeding',
       'play': '🎈 Play',
       'outdoors': '🌿 Outdoors',
-      'tummy_time': '🤸 Tummy time',
+      'tummy_time': '🤸 Tummy',
       'reading': '📚 Reading',
       'travel': '✈️ Travel',
       'milestone': '⭐ Milestone',
@@ -201,45 +186,34 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     return map[mood] ?? mood;
   }
 
-  // ── Layout algorithm ─────────────────────────────────────────────────────────
+  // ── Day grouping ──────────────────────────────────────────────────────────────
 
-  static const _widths = [88.0, 112.0, 148.0];
-
-  static List<_PhotoLayout> _buildLayouts(int count) {
-    if (count == 0) return const [];
-    final rand = math.Random(31415); // fixed seed = stable positions
-    final layouts = <_PhotoLayout>[];
-
-    // Loose 2-column grid with generous scatter
-    for (int i = 0; i < count; i++) {
-      final col = i % 2;
-      final row = i ~/ 2;
-      final w = _widths[rand.nextInt(3)];
-
-      // Horizontal: left column ~0-120, right column ~130-260, with overlap
-      final x = col == 0
-          ? 12 + rand.nextDouble() * 100
-          : 130 + rand.nextDouble() * 110;
-      // Vertical: 190px per row with ±55px scatter
-      final y = row * 190.0 + rand.nextDouble() * 55 + 12;
-      // Artsy tilt: ±14°
-      final angle = (rand.nextDouble() - 0.5) * 28 * math.pi / 180;
-
-      layouts.add(_PhotoLayout(x: x, y: y, w: w, angle: angle));
+  /// Groups a photo list by calendar day (yyyy-MM-dd), sorted chronologically.
+  static Map<String, List<InboxPhoto>> _groupByDay(List<InboxPhoto> photos) {
+    final groups = <String, List<InboxPhoto>>{};
+    for (final photo in photos) {
+      final key =
+          '${photo.date.year}-${photo.date.month.toString().padLeft(2, '0')}-${photo.date.day.toString().padLeft(2, '0')}';
+      groups.putIfAbsent(key, () => []).add(photo);
     }
-    return layouts;
+    return Map.fromEntries(
+      groups.entries.toList()..sort((a, b) => a.key.compareTo(b.key)),
+    );
   }
 
-  double get _canvasHeight {
-    if (_layouts.isEmpty) return 320;
-    double max = 0;
-    for (final l in _layouts) {
-      max = math.max(max, l.y + l.w * 1.35 + 44);
-    }
-    return max + 60;
+  static String _dayLabel(String dateKey) {
+    final parts = dateKey.split('-');
+    final dt = DateTime(
+        int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${weekdays[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}';
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -248,7 +222,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     final filters = _availableFilters;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5EFE6), // warm cream
+      backgroundColor: const Color(0xFFF5EFE6),
       appBar: AppBar(
         backgroundColor: const Color(0xFFF5EFE6),
         elevation: 0,
@@ -271,10 +245,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
             ),
             Text(
               _dateRange(),
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                color: AppColors.warmTaupe,
-              ),
+              style: GoogleFonts.inter(fontSize: 12, color: AppColors.warmTaupe),
             ),
           ],
         ),
@@ -307,7 +278,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
           Expanded(
             child: allBaby.isEmpty && !_loadingFromServer
                 ? _buildEmpty()
-                : _buildCanvas(allBaby, visible),
+                : _buildGrid(allBaby, visible),
           ),
           if (_selectedIds.isNotEmpty) _buildBottomBar(),
         ],
@@ -359,7 +330,11 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     );
   }
 
-  Widget _buildCanvas(List<InboxPhoto> allBaby, List<InboxPhoto> visible) {
+  // ── Grid grouped by day ───────────────────────────────────────────────────────
+
+  Widget _buildGrid(List<InboxPhoto> allBaby, List<InboxPhoto> visible) {
+    final days = _groupByDay(allBaby);
+
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(
         dragDevices: {
@@ -368,152 +343,167 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
           PointerDeviceKind.trackpad,
         },
       ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: 120),
-        child: SizedBox(
-          height: _canvasHeight,
-          width: double.infinity,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              for (int i = 0; i < allBaby.length && i < _layouts.length; i++)
-                _buildPhotoCard(
-                  photo: allBaby[i],
-                  layout: _layouts[i],
-                  dimmed: !visible.contains(allBaby[i]),
+      child: CustomScrollView(
+        slivers: [
+          for (final entry in days.entries) ...[
+            // Day header
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+                child: Row(
+                  children: [
+                    Text(
+                      _dayLabel(entry.key),
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.warmBrown,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${entry.value.length} photo${entry.value.length == 1 ? '' : 's'}',
+                      style: GoogleFonts.inter(
+                          fontSize: 12, color: AppColors.warmTaupe),
+                    ),
+                  ],
                 ),
-            ],
-          ),
-        ),
+              ),
+            ),
+            // Photo grid for this day
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              sliver: SliverGrid(
+                delegate: SliverChildBuilderDelegate(
+                  (ctx, i) => _buildPhotoCard(
+                    photo: entry.value[i],
+                    dimmed: !visible.contains(entry.value[i]),
+                  ),
+                  childCount: entry.value.length,
+                ),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 6,
+                  crossAxisSpacing: 6,
+                  childAspectRatio: 0.82,
+                ),
+              ),
+            ),
+          ],
+          // Bottom padding so last row clears the pin bar
+          const SliverToBoxAdapter(child: SizedBox(height: 110)),
+        ],
       ),
     );
   }
 
   Widget _buildPhotoCard({
     required InboxPhoto photo,
-    required _PhotoLayout layout,
     required bool dimmed,
   }) {
     final isSelected = _selectedIds.contains(photo.id);
-    final w = layout.w;
-    final imgH = w * 1.25;
     final hasTag = photo.mood != null || photo.activity != null;
 
-    return Positioned(
-      left: layout.x,
-      top: layout.y,
-      child: GestureDetector(
-        onTap: () {
-          if (dimmed) {
-            setState(() => _activeFilter = null);
-            return;
+    return GestureDetector(
+      onTap: () {
+        if (dimmed) {
+          setState(() => _activeFilter = null);
+          return;
+        }
+        setState(() {
+          if (isSelected) {
+            _selectedIds.remove(photo.id);
+          } else {
+            _selectedIds.add(photo.id);
           }
-          setState(() {
-            if (isSelected) {
-              _selectedIds.remove(photo.id);
-            } else {
-              _selectedIds.add(photo.id);
-            }
-          });
-        },
-        child: Opacity(
-          opacity: dimmed ? 0.22 : 1.0,
-          child: Transform.rotate(
-            angle: layout.angle,
-            child: Container(
-              width: w + 12,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(3),
-                border: isSelected
-                    ? Border.all(color: AppColors.sageGreen, width: 3)
-                    : null,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.20),
-                    blurRadius: 14,
-                    offset: const Offset(2, 5),
-                  ),
-                ],
+        });
+      },
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 150),
+        opacity: dimmed ? 0.25 : 1.0,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(5),
+            border: isSelected
+                ? Border.all(color: AppColors.sageGreen, width: 2.5)
+                : Border.all(color: Colors.black.withOpacity(0.06)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.10),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(6, 6, 6, 0),
-                    child: Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: SizedBox(
-                            width: w,
-                            height: imgH,
-                            child: _buildImage(photo.path, w, imgH),
+            ],
+          ),
+          child: Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(4)),
+                      child: _buildImage(photo.path),
+                    ),
+                    if (photo.isMilestone)
+                      const Positioned(
+                        top: 4,
+                        left: 4,
+                        child: Text('⭐', style: TextStyle(fontSize: 12)),
+                      ),
+                    if (isSelected)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Container(
+                          width: 20,
+                          height: 20,
+                          decoration: const BoxDecoration(
+                            color: AppColors.sageGreen,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.check,
+                              color: Colors.white, size: 12),
+                        ),
+                      ),
+                    // Spinner overlay for unscreened photos
+                    if (photo.hasBaby == null)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.55),
+                            borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(4)),
+                          ),
+                          child: const Center(
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
                           ),
                         ),
-                        if (photo.isMilestone)
-                          const Positioned(
-                            top: 4,
-                            left: 4,
-                            child: Text('⭐',
-                                style: TextStyle(fontSize: 14)),
-                          ),
-                        if (isSelected)
-                          Positioned(
-                            top: 4,
-                            right: 4,
-                            child: Container(
-                              width: 22,
-                              height: 22,
-                              decoration: const BoxDecoration(
-                                color: AppColors.sageGreen,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.check,
-                                  color: Colors.white, size: 14),
-                            ),
-                          ),
-                        if (photo.hasBaby == null)
-                          Positioned.fill(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.55),
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                              child: const Center(
-                                child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(
-                    height: hasTag ? null : 10,
-                    child: hasTag
-                        ? Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(5, 4, 5, 6),
-                            child: Text(
-                              _tagLine(photo),
-                              style: GoogleFonts.inter(
-                                fontSize: 9,
-                                color: AppColors.warmTaupe,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          )
-                        : null,
-                  ),
-                ],
+                      ),
+                  ],
+                ),
               ),
-            ),
+              // Tag line
+              if (hasTag)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  child: Text(
+                    _tagLine(photo),
+                    style: GoogleFonts.inter(
+                        fontSize: 9, color: AppColors.warmTaupe),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                )
+              else
+                const SizedBox(height: 6),
+            ],
           ),
         ),
       ),
@@ -529,7 +519,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     return parts.join(' · ');
   }
 
-  Widget _buildImage(String path, double w, double h) {
+  Widget _buildImage(String path) {
     if (path.startsWith('server:')) {
       return Image.network(
         'http://localhost:7272/photo?path=${Uri.encodeComponent(path.substring(7))}',
@@ -542,8 +532,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       if (comma != -1) {
         try {
           return Image.memory(
-              base64Decode(path.substring(comma + 1)),
-              fit: BoxFit.cover);
+              base64Decode(path.substring(comma + 1)), fit: BoxFit.cover);
         } catch (_) {}
       }
     }
@@ -568,8 +557,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.photo_library_outlined,
-              size: 48,
-              color: AppColors.warmTaupe.withOpacity(0.4)),
+              size: 48, color: AppColors.warmTaupe.withOpacity(0.4)),
           const SizedBox(height: 12),
           Text('No photos for this week yet',
               style: GoogleFonts.inter(
@@ -615,8 +603,8 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.sageGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10)),
               ),
@@ -626,13 +614,4 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       ),
     );
   }
-}
-
-class _PhotoLayout {
-  final double x, y, w, angle;
-  const _PhotoLayout(
-      {required this.x,
-      required this.y,
-      required this.w,
-      required this.angle});
 }

@@ -163,12 +163,32 @@ def scan_folder():
             })
             count += 1
 
-    # Sort each group chronologically
-    for v in groups.values():
-        v.sort(key=lambda x: x['date'])
+    # Sort each group chronologically, then deduplicate burst shots
+    for key in groups:
+        groups[key].sort(key=lambda x: x['date'])
+        groups[key] = _dedup_bursts(groups[key])
 
-    print(f"  Scan complete: {count} photos across {len(groups)} slots")
+    total_deduped = sum(len(v) for v in groups.values())
+    print(f"  Scan complete: {total_deduped} photos across {len(groups)} slots (after burst dedup)")
     return groups, error
+
+def _dedup_bursts(photos, gap_seconds=60):
+    """
+    Remove burst duplicates. If multiple photos are taken within gap_seconds
+    of each other, keep only the first (chronologically).
+    """
+    if len(photos) <= 1:
+        return photos
+    result = [photos[0]]
+    for photo in photos[1:]:
+        try:
+            prev_dt = datetime.fromisoformat(result[-1]['date'])
+            curr_dt = datetime.fromisoformat(photo['date'])
+            if (curr_dt - prev_dt).total_seconds() >= gap_seconds:
+                result.append(photo)
+        except Exception:
+            result.append(photo)
+    return result
 
 # -- AI photo analysis ---------------------------------------------------------
 
