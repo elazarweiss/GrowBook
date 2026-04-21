@@ -501,12 +501,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
                 return
-            with open(abs_path, 'rb') as fh:
-                data = fh.read()
+            # ?size=N resizes the image to max N px before serving (for grid thumbnails)
+            try:
+                size = int(qs.get('size', ['0'])[0])
+            except ValueError:
+                size = 0
+            if size > 0:
+                data, _ = _prepare_image(abs_path, max_px=size)
+            else:
+                data = None
+            if data is None:
+                with open(abs_path, 'rb') as fh:
+                    data = fh.read()
             ext = os.path.splitext(abs_path)[1].lower()
-            ctype = ('image/jpeg' if ext in ('.jpg', '.jpeg')
-                     else 'image/png' if ext == '.png'
-                     else 'image/webp')
+            ctype = 'image/jpeg' if size > 0 else (
+                'image/jpeg' if ext in ('.jpg', '.jpeg')
+                else 'image/png' if ext == '.png'
+                else 'image/webp'
+            )
             self.send_response(200)
             self._cors()
             self.send_header('Content-Type', ctype)

@@ -405,7 +405,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                     crossAxisCount: 3,
                     mainAxisSpacing: 6,
                     crossAxisSpacing: 6,
-                    childAspectRatio: 0.73, // taller to accommodate tag strip
+                    childAspectRatio: 0.82,
                   ),
                 ),
               );
@@ -417,6 +417,13 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       ),
     );
   }
+
+  // Quick-select activity labels shown as an overlay at the bottom of each photo.
+  // Mood is intentionally omitted — AI handles it at pin time.
+  static const _quickActivities = ['bath', 'feeding', 'play', 'outdoors'];
+  static const _activityShort = {
+    'bath': 'Bath', 'feeding': 'Feed', 'play': 'Play', 'outdoors': 'Out',
+  };
 
   Widget _buildPhotoCard({
     required InboxPhoto photo,
@@ -432,7 +439,6 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       opacity: dimmed ? 0.25 : 1.0,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
           borderRadius: BorderRadius.circular(5),
           border: isSelected
               ? Border.all(color: AppColors.sageGreen, width: 2.5)
@@ -445,11 +451,17 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
             ),
           ],
         ),
-        child: Column(
-          children: [
-            // Image area — tap to select, long-press to expand burst
-            Expanded(
-              child: GestureDetector(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Layer 0: image (bottom)
+              _buildImage(photo.path),
+
+              // Layer 1: tap to select/deselect (covers whole card)
+              GestureDetector(
+                behavior: HitTestBehavior.translucent,
                 onTap: () {
                   if (dimmed) {
                     setState(() => _activeFilter = null);
@@ -472,92 +484,162 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                           }
                         })
                     : null,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(4)),
-                      child: _buildImage(photo.path),
+              ),
+
+              // Layer 2: gradient + activity label row (bottom overlay)
+              // Wrapped in opaque GestureDetector so taps here don't reach image select
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {}, // absorb stray taps between labels
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(2, 14, 2, 4),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.72),
+                          Colors.transparent,
+                        ],
+                      ),
                     ),
-                    // Burst badge: "📷+3  hold" when collapsed
-                    if (isBurstCover && burstHiddenCount > 0)
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: [
-                                Colors.black.withOpacity(0.65),
-                                Colors.transparent,
-                              ],
-                            ),
-                          ),
-                          child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: _quickActivities.map((act) {
+                        final isActive = photo.activity == act;
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            final next = isActive ? null : act;
+                            _updatePhotoTag(photo.copyWith(
+                              activity: next,
+                              clearActivity: next == null,
+                            ));
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 2),
+                            decoration: isActive
+                                ? BoxDecoration(
+                                    color: AppColors.sageGreen,
+                                    borderRadius: BorderRadius.circular(3),
+                                  )
+                                : null,
                             child: Text(
-                              burstExpanded
-                                  ? '📷 hold to collapse'
-                                  : '📷 +$burstHiddenCount similar',
-                              style: const TextStyle(
-                                  fontSize: 8, color: Colors.white),
+                              _activityShort[act]!,
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                fontWeight: isActive
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
+                                color: Colors.white
+                                    .withOpacity(isActive ? 1.0 : 0.55),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                    if (isSelected)
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: Container(
-                          width: 20,
-                          height: 20,
-                          decoration: const BoxDecoration(
-                            color: AppColors.sageGreen,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.check,
-                              color: Colors.white, size: 12),
-                        ),
-                      ),
-                    // Spinner overlay for unscreened photos
-                    if (photo.hasBaby == null)
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.55),
-                            borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(4)),
-                          ),
-                          child: const Center(
-                            child: SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 ),
               ),
-            ),
-            // Tag strip — always shown; buttons handle their own taps
-            _TagStrip(photo: photo, onTagChanged: _updatePhotoTag),
-          ],
+
+              // Layer 3: burst badge (shows over gradient if burst photo)
+              if (isBurstCover && burstHiddenCount > 0)
+                Positioned(
+                  bottom: 28,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Text(
+                      burstExpanded
+                          ? '📷 hold to collapse'
+                          : '📷 +$burstHiddenCount similar',
+                      style: const TextStyle(
+                          fontSize: 8, color: Colors.white),
+                    ),
+                  ),
+                ),
+
+              // Layer 4: milestone toggle (top-left)
+              Positioned(
+                top: 4,
+                left: 4,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _updatePhotoTag(
+                      photo.copyWith(isMilestone: !photo.isMilestone)),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: photo.isMilestone
+                          ? Colors.amber
+                          : Colors.black.withOpacity(0.35),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '⭐',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: photo.isMilestone
+                              ? Colors.white
+                              : Colors.white.withOpacity(0.45),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // Layer 5: selection checkmark (top-right)
+              if (isSelected)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: const BoxDecoration(
+                      color: AppColors.sageGreen,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.check,
+                        color: Colors.white, size: 12),
+                  ),
+                ),
+
+              // Layer 6: spinner for unscreened photos
+              if (photo.hasBaby == null)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.white.withOpacity(0.55),
+                    child: const Center(
+                      child: SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  // size=300 means the server resizes to 300px max before serving — much faster grid loading
   Widget _buildImage(String path) {
     if (path.startsWith('server:')) {
       return Image.network(
-        'http://localhost:7272/photo?path=${Uri.encodeComponent(path.substring(7))}',
+        'http://localhost:7272/photo?path=${Uri.encodeComponent(path.substring(7))}&size=300',
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _placeholder(),
       );
@@ -731,93 +813,3 @@ class _DayHeader extends StatelessWidget {
   }
 }
 
-// ── Inline tag strip on each photo card ───────────────────────────────────────
-//
-// Three buttons: mood cycle | activity cycle | milestone toggle
-// Tapping saves immediately to Hive via onTagChanged callback.
-// Lives below the image area; image tap does NOT propagate here.
-
-class _TagStrip extends StatelessWidget {
-  final InboxPhoto photo;
-  final ValueChanged<InboxPhoto> onTagChanged;
-
-  // Cycling order: null → first value → ... → last value → null
-  static const _moodCycle = <String?>[
-    null, 'happy', 'calm', 'sleeping', 'crying', 'silly',
-  ];
-  static const _activityCycle = <String?>[
-    null, 'bath', 'feeding', 'play', 'outdoors', 'tummy_time', 'reading', 'travel',
-  ];
-  static const _moodEmoji = <String, String>{
-    'happy': '😊', 'calm': '😌', 'sleeping': '😴',
-    'crying': '😢', 'silly': '😄', 'surprised': '😲',
-  };
-  static const _activityEmoji = <String, String>{
-    'bath': '🛁', 'feeding': '🍼', 'play': '🎈', 'outdoors': '🌿',
-    'tummy_time': '🤸', 'reading': '📚', 'travel': '✈️', 'other': '📷',
-  };
-
-  const _TagStrip({required this.photo, required this.onTagChanged});
-
-  void _cycleMood() {
-    final idx = _moodCycle.indexOf(photo.mood);
-    final next = _moodCycle[(idx + 1) % _moodCycle.length];
-    onTagChanged(photo.copyWith(mood: next, clearMood: next == null));
-  }
-
-  void _cycleActivity() {
-    final idx = _activityCycle.indexOf(photo.activity);
-    final next = _activityCycle[(idx + 1) % _activityCycle.length];
-    onTagChanged(photo.copyWith(activity: next, clearActivity: next == null));
-  }
-
-  void _toggleMilestone() {
-    onTagChanged(photo.copyWith(isMilestone: !photo.isMilestone));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final moodEmoji = _moodEmoji[photo.mood] ?? '😶';
-    final activityEmoji = _activityEmoji[photo.activity] ?? '🎯';
-    final hasMood = photo.mood != null;
-    final hasActivity = photo.activity != null && photo.activity != 'other';
-
-    return SizedBox(
-      height: 30,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _TagButton(emoji: moodEmoji, active: hasMood, onTap: _cycleMood),
-          _TagButton(emoji: activityEmoji, active: hasActivity, onTap: _cycleActivity),
-          _TagButton(emoji: '⭐', active: photo.isMilestone, onTap: _toggleMilestone),
-        ],
-      ),
-    );
-  }
-}
-
-class _TagButton extends StatelessWidget {
-  final String emoji;
-  final bool active;
-  final VoidCallback onTap;
-
-  const _TagButton({required this.emoji, required this.active, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 36,
-        height: 30,
-        child: Center(
-          child: Opacity(
-            opacity: active ? 1.0 : 0.25,
-            child: Text(emoji, style: const TextStyle(fontSize: 14)),
-          ),
-        ),
-      ),
-    );
-  }
-}
