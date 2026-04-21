@@ -266,20 +266,51 @@ _SCREEN_PROMPT = (
     'Reply with ONLY valid JSON: {"has_baby": true} or {"has_baby": false}'
 )
 
-_TAG_PROMPT = """This photo contains a baby. Return ONLY valid JSON with no extra text:
-{
+_TAG_PROMPT_BASE = """This photo contains a baby.{hints}Return ONLY valid JSON with no extra text:
+{{
   "people": [],
   "mood": "",
   "activity": "",
   "is_milestone": false,
   "caption": ""
-}
+}}
 Rules:
 - "people": array of any that apply: "baby_solo", "with_mom", "with_dad", "with_siblings", "with_grandparents", "family_group"
-- "mood": exactly one of: "happy", "calm", "sleeping", "crying", "silly", "surprised"
-- "activity": exactly one of: "bath", "feeding", "play", "outdoors", "tummy_time", "reading", "travel", "milestone", "other"
-- "is_milestone": true only for clear developmental firsts (first smile, crawl, steps, words, etc.)
+- "mood": exactly one of: "happy", "calm", "sleeping", "crying", "silly", "surprised"{mood_rule}
+- "activity": exactly one of: "bath", "feeding", "play", "outdoors", "tummy_time", "reading", "travel", "milestone", "other"{activity_rule}
+- "is_milestone": true only for clear developmental firsts (first smile, crawl, steps, words, etc.){milestone_rule}
 - "caption": one warm, concise English sentence under 60 characters"""
+
+def _build_tag_prompt(user_hints=None):
+    """Build the analyze prompt, optionally embedding user-provided tag hints."""
+    hints_text = ''
+    mood_rule = ''
+    activity_rule = ''
+    milestone_rule = ''
+
+    if user_hints:
+        mood = user_hints.get('mood')
+        activity = user_hints.get('activity')
+        milestone = user_hints.get('milestone', False)
+        hint_lines = []
+        if mood:
+            hint_lines.append(f'  - mood: {mood} (user confirmed — keep this value)')
+            mood_rule = f' — use "{mood}" as provided'
+        if activity:
+            hint_lines.append(f'  - activity: {activity} (user confirmed — keep this value)')
+            activity_rule = f' — use "{activity}" as provided'
+        if milestone:
+            hint_lines.append(f'  - is_milestone: true (user confirmed)')
+            milestone_rule = ' — user confirmed this is a milestone'
+        if hint_lines:
+            hints_text = '\nUser-provided tags (do not override):\n' + '\n'.join(hint_lines) + '\n'
+
+    return _TAG_PROMPT_BASE.format(
+        hints=hints_text,
+        mood_rule=mood_rule,
+        activity_rule=activity_rule,
+        milestone_rule=milestone_rule,
+    )
 
 def _call_claude(b64, media_type, prompt, max_tokens):
     """Single Claude Vision call. Returns parsed JSON dict or None."""
@@ -324,12 +355,13 @@ def screen_photo(path, use_thumb=False):
     has_baby = result.get('has_baby', False) if result else False
     return path, has_baby
 
-def tag_photo(path):
+def tag_photo(path, user_hints=None):
     """Pass 2: full tagging for confirmed baby photos. Returns tag dict or None."""
     b64, media_type = _prepare_b64(path)
     if b64 is None:
         return path, None
-    result = _call_claude(b64, media_type, _TAG_PROMPT, max_tokens=250)
+    prompt = _build_tag_prompt(user_hints)
+    result = _call_claude(b64, media_type, prompt, max_tokens=250)
     return path, result
 
 def screen_photos_only(valid_paths, use_thumb=False):
@@ -354,16 +386,18 @@ def screen_photos_only(valid_paths, use_thumb=False):
     print(f'  Screen done: {baby_count}/{total} are baby photos')
     return results
 
-def tag_photos_only(valid_paths):
+def tag_photos_only(valid_paths, hints=None):
     """
     Pass 2 only: full tagging for photos already confirmed to contain a baby (4 workers).
+    hints: optional dict of path -> {mood, activity, milestone} with user-provided tags.
     Returns dict: path -> {people, mood, activity, is_milestone, caption}
     """
+    hints = hints or {}
     total = len(valid_paths)
     print(f'  Full-tagging {total} baby photos...')
     tags = {}
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(tag_photo, p): p for p in valid_paths}
+        futures = {executor.submit(tag_photo, p, hints.get(p)): p for p in valid_paths}
         for future in futures:
             path, result = future.result()
             if result:
@@ -442,7 +476,9 @@ class Handler(BaseHTTPRequestHandler):
 
         elif parsed.path == '/analyze':
             # Pass 2: full tagging (caller already knows these are baby photos)
-            tags = tag_photos_only(valid_paths)
+            # hints: optional dict of path -> {mood, activity, milestone} from user
+            hints = data.get('hints', {})
+            tags = tag_photos_only(valid_paths, hints=hints)
             _json_response(self, {'tags': tags})
 
     def do_GET(self):

@@ -153,20 +153,29 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
   }
 
   List<InboxPhoto> get _visiblePhotos {
-    final baby = _photos.where((p) => p.hasBaby != false).toList();
-    if (_activeFilter == null) return baby;
-    if (_activeFilter == 'milestone') return baby.where((p) => p.isMilestone).toList();
-    return baby.where((p) => p.mood == _activeFilter || p.activity == _activeFilter).toList();
+    final all = _photos.where((p) => p.hasBaby != false).toList();
+    if (_activeFilter == null) return all;
+    if (_activeFilter == 'milestone') return all.where((p) => p.isMilestone).toList();
+    return all.where((p) => p.mood == _activeFilter || p.activity == _activeFilter).toList();
   }
 
   Set<String> get _availableFilters {
     final tags = <String>{};
-    for (final p in _photos.where((p) => p.hasBaby == true)) {
+    // Include any photo with manual or AI tags (not just hasBaby==true)
+    for (final p in _photos) {
       if (p.mood != null) tags.add(p.mood!);
       if (p.activity != null && p.activity != 'other') tags.add(p.activity!);
       if (p.isMilestone) tags.add('milestone');
     }
     return tags;
+  }
+
+  /// Called by _TagStrip when user cycles a tag. Saves to Hive immediately.
+  void _updatePhotoTag(InboxPhoto updated) {
+    BabyRepository.instance.saveInboxPhoto(updated);
+    setState(() {
+      _photos = _photos.map((p) => p.id == updated.id ? updated : p).toList();
+    });
   }
 
   static String _filterLabel(String f) {
@@ -187,14 +196,6 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
       'milestone': '⭐ Milestone',
     };
     return labels[f] ?? f;
-  }
-
-  static String _moodEmoji(String mood) {
-    const map = {
-      'happy': '😊', 'calm': '😌', 'sleeping': '🌙',
-      'crying': '😢', 'silly': '😜', 'surprised': '😲',
-    };
-    return map[mood] ?? mood;
   }
 
   // ── Day grouping ──────────────────────────────────────────────────────────────
@@ -404,7 +405,7 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                     crossAxisCount: 3,
                     mainAxisSpacing: 6,
                     crossAxisSpacing: 6,
-                    childAspectRatio: 0.82,
+                    childAspectRatio: 0.73, // taller to accommodate tag strip
                   ),
                 ),
               );
@@ -424,54 +425,53 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
     bool burstExpanded = false,
   }) {
     final isSelected = _selectedIds.contains(photo.id);
-    final hasTag = photo.mood != null || photo.activity != null;
     final isBurstCover = photo.burstId != null && photo.burstRepresentative;
 
-    return GestureDetector(
-      onTap: () {
-        if (dimmed) {
-          setState(() => _activeFilter = null);
-          return;
-        }
-        // Long-press expands burst; tap selects
-        setState(() {
-          if (isSelected) {
-            _selectedIds.remove(photo.id);
-          } else {
-            _selectedIds.add(photo.id);
-          }
-        });
-      },
-      onLongPress: isBurstCover && burstHiddenCount > 0
-          ? () => setState(() {
-                if (burstExpanded) {
-                  _expandedBursts.remove(photo.burstId);
-                } else {
-                  _expandedBursts.add(photo.burstId!);
-                }
-              })
-          : null,
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 150),
-        opacity: dimmed ? 0.25 : 1.0,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(5),
-            border: isSelected
-                ? Border.all(color: AppColors.sageGreen, width: 2.5)
-                : Border.all(color: Colors.black.withOpacity(0.06)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.10),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              Expanded(
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 150),
+      opacity: dimmed ? 0.25 : 1.0,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(5),
+          border: isSelected
+              ? Border.all(color: AppColors.sageGreen, width: 2.5)
+              : Border.all(color: Colors.black.withOpacity(0.06)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.10),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // Image area — tap to select, long-press to expand burst
+            Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  if (dimmed) {
+                    setState(() => _activeFilter = null);
+                    return;
+                  }
+                  setState(() {
+                    if (isSelected) {
+                      _selectedIds.remove(photo.id);
+                    } else {
+                      _selectedIds.add(photo.id);
+                    }
+                  });
+                },
+                onLongPress: isBurstCover && burstHiddenCount > 0
+                    ? () => setState(() {
+                          if (burstExpanded) {
+                            _expandedBursts.remove(photo.burstId);
+                          } else {
+                            _expandedBursts.add(photo.burstId!);
+                          }
+                        })
+                    : null,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -480,12 +480,6 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                           top: Radius.circular(4)),
                       child: _buildImage(photo.path),
                     ),
-                    if (photo.isMilestone)
-                      const Positioned(
-                        top: 4,
-                        left: 4,
-                        child: Text('⭐', style: TextStyle(fontSize: 12)),
-                      ),
                     // Burst badge: "📷+3  hold" when collapsed
                     if (isBurstCover && burstHiddenCount > 0)
                       Positioned(
@@ -551,34 +545,13 @@ class _BabyWeekEditorScreenState extends State<BabyWeekEditorScreen> {
                   ],
                 ),
               ),
-              // Tag line
-              if (hasTag)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                  child: Text(
-                    _tagLine(photo),
-                    style: GoogleFonts.inter(
-                        fontSize: 9, color: AppColors.warmTaupe),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                )
-              else
-                const SizedBox(height: 6),
-            ],
-          ),
+            ),
+            // Tag strip — always shown; buttons handle their own taps
+            _TagStrip(photo: photo, onTagChanged: _updatePhotoTag),
+          ],
         ),
       ),
     );
-  }
-
-  String _tagLine(InboxPhoto photo) {
-    final parts = <String>[];
-    if (photo.mood != null) parts.add(_moodEmoji(photo.mood!));
-    if (photo.activity != null && photo.activity != 'other') {
-      parts.add(photo.activity!.replaceAll('_', ' '));
-    }
-    return parts.join(' · ');
   }
 
   Widget _buildImage(String path) {
@@ -755,5 +728,96 @@ class _DayHeader extends StatelessWidget {
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return '${wd[dt.weekday - 1]}, ${mo[dt.month - 1]} ${dt.day}';
+  }
+}
+
+// ── Inline tag strip on each photo card ───────────────────────────────────────
+//
+// Three buttons: mood cycle | activity cycle | milestone toggle
+// Tapping saves immediately to Hive via onTagChanged callback.
+// Lives below the image area; image tap does NOT propagate here.
+
+class _TagStrip extends StatelessWidget {
+  final InboxPhoto photo;
+  final ValueChanged<InboxPhoto> onTagChanged;
+
+  // Cycling order: null → first value → ... → last value → null
+  static const _moodCycle = <String?>[
+    null, 'happy', 'calm', 'sleeping', 'crying', 'silly',
+  ];
+  static const _activityCycle = <String?>[
+    null, 'bath', 'feeding', 'play', 'outdoors', 'tummy_time', 'reading', 'travel',
+  ];
+  static const _moodEmoji = <String, String>{
+    'happy': '😊', 'calm': '😌', 'sleeping': '😴',
+    'crying': '😢', 'silly': '😄', 'surprised': '😲',
+  };
+  static const _activityEmoji = <String, String>{
+    'bath': '🛁', 'feeding': '🍼', 'play': '🎈', 'outdoors': '🌿',
+    'tummy_time': '🤸', 'reading': '📚', 'travel': '✈️', 'other': '📷',
+  };
+
+  const _TagStrip({required this.photo, required this.onTagChanged});
+
+  void _cycleMood() {
+    final idx = _moodCycle.indexOf(photo.mood);
+    final next = _moodCycle[(idx + 1) % _moodCycle.length];
+    onTagChanged(photo.copyWith(mood: next, clearMood: next == null));
+  }
+
+  void _cycleActivity() {
+    final idx = _activityCycle.indexOf(photo.activity);
+    final next = _activityCycle[(idx + 1) % _activityCycle.length];
+    onTagChanged(photo.copyWith(activity: next, clearActivity: next == null));
+  }
+
+  void _toggleMilestone() {
+    onTagChanged(photo.copyWith(isMilestone: !photo.isMilestone));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final moodEmoji = _moodEmoji[photo.mood] ?? '😶';
+    final activityEmoji = _activityEmoji[photo.activity] ?? '🎯';
+    final hasMood = photo.mood != null;
+    final hasActivity = photo.activity != null && photo.activity != 'other';
+
+    return SizedBox(
+      height: 30,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _TagButton(emoji: moodEmoji, active: hasMood, onTap: _cycleMood),
+          _TagButton(emoji: activityEmoji, active: hasActivity, onTap: _cycleActivity),
+          _TagButton(emoji: '⭐', active: photo.isMilestone, onTap: _toggleMilestone),
+        ],
+      ),
+    );
+  }
+}
+
+class _TagButton extends StatelessWidget {
+  final String emoji;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _TagButton({required this.emoji, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 36,
+        height: 30,
+        child: Center(
+          child: Opacity(
+            opacity: active ? 1.0 : 0.25,
+            child: Text(emoji, style: const TextStyle(fontSize: 14)),
+          ),
+        ),
+      ),
+    );
   }
 }

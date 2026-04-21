@@ -323,10 +323,26 @@ class BabyScanController {
     List<InboxPhoto> toPin = selected;
 
     try {
+      // Build per-path hints from any tags the user has already set manually
+      final hints = <String, Map<String, dynamic>>{};
+      for (final entry in pathToPhoto.entries) {
+        final photo = entry.value;
+        if (photo.mood != null || photo.activity != null || photo.isMilestone) {
+          hints[entry.key] = {
+            'mood': photo.mood,
+            'activity': photo.activity,
+            'milestone': photo.isMilestone,
+          };
+        }
+      }
+
       final response = await http.post(
         Uri.parse('$_serverBase/analyze'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'paths': pathToPhoto.keys.toList()}),
+        body: jsonEncode({
+          'paths': pathToPhoto.keys.toList(),
+          if (hints.isNotEmpty) 'hints': hints,
+        }),
       ).timeout(const Duration(minutes: 2));
 
       if (response.statusCode == 200) {

@@ -32,6 +32,34 @@ class InboxPhoto {
     this.burstRepresentative = true,
   });
 
+  /// Update individual tag fields without touching the rest.
+  /// Use clearMood=true or clearActivity=true to set a nullable field to null.
+  InboxPhoto copyWith({
+    bool? hasBaby,
+    bool? isMilestone,
+    String? mood,
+    String? activity,
+    String? aiCaption,
+    List<String>? people,
+    bool clearMood = false,
+    bool clearActivity = false,
+  }) {
+    return InboxPhoto(
+      id: id,
+      path: path,
+      date: date,
+      slotKey: slotKey,
+      hasBaby: hasBaby ?? this.hasBaby,
+      isMilestone: isMilestone ?? this.isMilestone,
+      mood: clearMood ? null : (mood ?? this.mood),
+      activity: clearActivity ? null : (activity ?? this.activity),
+      aiCaption: aiCaption ?? this.aiCaption,
+      people: people ?? this.people,
+      burstId: burstId,
+      burstRepresentative: burstRepresentative,
+    );
+  }
+
   InboxPhoto copyWithScreening({
     required bool hasBaby,
     bool isMilestone = false,
