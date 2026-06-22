@@ -41,7 +41,11 @@ except ImportError:
     AI_AVAILABLE = False
 
 # -- Configuration --------------------------------------------------------------
-SCAN_FOLDER = r"C:\Users\elazar\Dropbox\Camera Uploads"
+SCAN_FOLDERS = [
+    r"C:\Users\elazar\Dropbox\Camera Uploads",
+    r"C:\Users\elazar\Dropbox\Pictures",
+]
+SCAN_FOLDER = SCAN_FOLDERS[0]   # kept for legacy GrowBook /scan endpoint
 BIRTH_DATE  = datetime(2026, 3, 28)
 PORT        = 7272
 IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.bmp'}
@@ -410,12 +414,33 @@ def tag_photos_only(valid_paths, hints=None):
 # -- HTTP server ----------------------------------------------------------------
 
 def _validate_paths(paths):
-    """Return only paths that exist and are within SCAN_FOLDER."""
-    scan_abs = os.path.abspath(SCAN_FOLDER)
-    return [
-        p for p in paths
-        if os.path.isfile(p) and os.path.abspath(p).startswith(scan_abs)
-    ]
+    """Return only paths that exist and are within any of SCAN_FOLDERS."""
+    scan_roots = [os.path.abspath(f) for f in SCAN_FOLDERS]
+    def _allowed(p):
+        abs_p = os.path.abspath(p)
+        return os.path.isfile(abs_p) and any(abs_p.startswith(r) for r in scan_roots)
+    return [p for p in paths if _allowed(p)]
+
+
+def scan_by_date(target_date):
+    """Return list of photo dicts for a specific calendar date across all SCAN_FOLDERS."""
+    results = []
+    for folder in SCAN_FOLDERS:
+        if not os.path.isdir(folder):
+            continue
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            for fname in files:
+                if os.path.splitext(fname)[1].lower() not in IMAGE_EXTS:
+                    continue
+                path = os.path.join(root, fname)
+                dt = get_photo_date(path)
+                if not dt:
+                    continue
+                if dt.date() == target_date:
+                    results.append({'filename': fname, 'path': path, 'date': dt.isoformat()})
+    results.sort(key=lambda x: x['date'])
+    return results
 
 def _read_post_body(handler):
     length = int(handler.headers.get('Content-Length', 0))
@@ -493,11 +518,30 @@ class Handler(BaseHTTPRequestHandler):
             groups, err = scan_folder()
             _json_response(self, {'groups': groups, 'error': err})
 
+        elif parsed.path == '/photos':
+            # Baby Steps: get all photos for a specific date across all scan folders
+            # ?date=2026-06-15
+            date_str = qs.get('date', [''])[0]
+            try:
+                from datetime import date as _date
+                target = _date.fromisoformat(date_str)
+            except ValueError:
+                self.send_response(400)
+                self.end_headers()
+                return
+            photos = scan_by_date(target)
+            _json_response(self, {'photos': photos, 'date': date_str})
+
+        elif parsed.path == '/folders':
+            # Return configured scan folders
+            _json_response(self, {'folders': SCAN_FOLDERS})
+
         elif parsed.path == '/photo':
             path = qs.get('path', [''])[0]
             abs_path = os.path.abspath(path) if path else ''
-            scan_abs = os.path.abspath(SCAN_FOLDER)
-            if not path or not os.path.isfile(abs_path) or not abs_path.startswith(scan_abs):
+            scan_roots = [os.path.abspath(f) for f in SCAN_FOLDERS]
+            allowed = any(abs_path.startswith(r) for r in scan_roots)
+            if not path or not os.path.isfile(abs_path) or not allowed:
                 self.send_response(404)
                 self.end_headers()
                 return
